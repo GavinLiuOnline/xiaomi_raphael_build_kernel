@@ -1,0 +1,77 @@
+--- linux/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
++++ linux/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
+@@ -578,8 +578,10 @@
+ &gpu_zap_shader {
+ 	firmware-name = "qcom/sm8150/Xiaomi/raphael/a640_zap.mbn";
+ };
+ 
++
++
+ &i2c19 {
+ 	clock-frequency = <100000>;
+ 	status = "okay";
+ 	goodix@5d {
+@@ -1099,10 +1101,63 @@
+         slew-rate = <1>;
+         bias-disable;
+         output-high;
+     };
++
++	smartpa_int_active: smartpa_int_active {
++		pins = "gpio141";
++		function = "gpio";
++		drive-strength = <2>; /* 2 MA */
++		bias-pull-up;
++		input-enable;
++	};
++
++	smartpa_int_suspend: smartpa_int_suspend {
++		pins = "gpio141";
++		function = "gpio";
++		drive-strength = <2>; /* 2 MA */
++		slew-rate = <1>
++		bias-pull-up;
++		input-enable;
++	};
++
++	smartpa_enable_active: smartpa_enable_active {
++		pins = "gpio59";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++		bias-pull-down;
++		output-low;
++	};
++
++	smartpa_enable_suspend: smartpa_enable_suspend {
++		pins = "gpio59";
++		function = "gpio";
++		drive-strength = <2>;
++		slew-rate = <1>
++		bias-disable;
++		bias-pull-down;
++		output-low;
++	};
+ };
+ 
++&i2c1 {
++	status = "ok";
++	tfa98xx@34 {
++		compatible = "nxp,tfa9874";
++		reg = <0x34>;
++		reset-gpio = <&tlmm 59 0>;
++		irq-gpio = <&tlmm 141 0>;
++		interrupt-parent = <&tlmm>;
++		interrupts = <141 0>;
++		interrupt-names = "smartpa_irq";
++		pinctrl-names = "default", "sleep";
++		pinctrl-0 = <&smartpa_int_active &smartpa_enable_active>;
++		pinctrl-1 = <&smartpa_int_suspend &smartpa_enable_suspend>;
++		status = "ok";
++	};
++};
++
+ &uart2 {
+ 	status = "okay";
+ };
+ 

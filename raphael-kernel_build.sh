@@ -6,7 +6,7 @@ git clone https://github.com/GengWei1997/linux.git --branch raphael-$1 --depth 1
 
 # 应用 builddeb 补丁
 patch linux/scripts/package/builddeb < builddeb.patch
-
+patch linux/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts < dts.patch
 cd linux
 git add .
 git commit -m "builddeb: Add Qcom SM8150 DTBs to boot partition"
