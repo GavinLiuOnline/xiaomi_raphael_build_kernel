@@ -5,6 +5,10 @@ set -e  # 遇到错误立即退出
 rm -rf ./*.deb
 rm -rf ./linux-upstream*
 
+export CCACHE_DIR="$HOME/.ccache"
+export PATH="/usr/lib/ccache:$PATH"
+export CCACHE_MAXSIZE=10G
+
 git config --global user.name "gavin liu"
 git config --global user.email "1824306327@163.com"
 
@@ -59,7 +63,6 @@ git commit -m "builddeb: Add Qcom SM8150 DTBs to boot partition"
 # 生成内核配置
 cp ../raphael.config arch/arm64/configs/
 
-
 make -j$(nproc) ARCH=arm64 LLVM=-22 defconfig raphael.config
 
 # 编译内核
@@ -78,9 +81,14 @@ if [ -n "$HEADERS_DEB" ]; then
   mv "$HEADERS_DEB" linux-headers-xiaomi-raphael.deb
 fi
 
+#清理多余 deb
+rm -rf ./*arm64*.deb
 # 清理源码目录
 # rm -rf linux
 
-# 构建 deb 包
+# 构建 firmware 和 alsa deb 包
 dpkg-deb --build --root-owner-group firmware-xiaomi-raphael
 dpkg-deb --build --root-owner-group alsa-xiaomi-raphael
+
+# 降低 deb 包权限，方便外部项目 curl 下载使用
+chmod 644 ./*.deb

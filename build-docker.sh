@@ -23,6 +23,7 @@ echo ""
 echo "[2/2] 开始编译内核..."
 docker run --rm \
     -v "$(pwd):/build" \
+    -v "ccache-raphael:/root/.ccache" \
     "${IMAGE_NAME}" \
     bash /build/build-in-docker.sh "${KERNEL_VERSION}"
 
