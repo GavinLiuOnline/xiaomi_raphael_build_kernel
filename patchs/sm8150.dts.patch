@@ -1,0 +1,41 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8150.dtsi b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+index 079e2f0a6..2877cb46a 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+@@ -794,6 +794,12 @@ qseecom_mem: memory@9e400000 {
+ 			reg = <0x0 0x9e400000 0x0 0x1400000>;
+ 			no-map;
+ 		};
++
++		fastrpc_mem: memory@a6000000 {
++			reg = <0x0 0xa6000000 0x0 0x2000000>;
++			no-map;
++		};
++
+ 	};
+ 
+ 	smem {
+@@ -2279,6 +2285,7 @@ fastrpc {
+ 					qcom,non-secure-domain;
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
++					memory-region = <&fastrpc_mem>;
+ 
+ 					compute-cb@1 {
+ 						compatible = "qcom,fastrpc-compute-cb";
+@@ -3455,6 +3462,7 @@ fastrpc {
+ 					qcom,non-secure-domain;
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
++					memory-region = <&fastrpc_mem>;
+ 
+ 					compute-cb@1 {
+ 						compatible = "qcom,fastrpc-compute-cb";
+@@ -4499,6 +4507,7 @@ fastrpc {
+ 					qcom,non-secure-domain;
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
++					memory-region = <&fastrpc_mem>;
+ 
+ 					compute-cb@3 {
+ 						compatible = "qcom,fastrpc-compute-cb";

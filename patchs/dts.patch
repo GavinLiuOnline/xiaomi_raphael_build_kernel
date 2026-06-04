@@ -1,0 +1,153 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
+index 4ffeac7ad..ceb74a6d5 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
+@@ -175,6 +175,7 @@ cont_splash_mem: memory@9c000000 {
+ 			no-map;
+ 		};
+ 
++
+ 		cdsp_sec_mem: memory@a4c00000 {
+ 			reg = <0x0 0xa4c00000 0x0 0x3c00000>;
+ 			no-map;
+@@ -199,6 +200,11 @@ rmtfs_mem: memory@fe101000 {
+ 			qcom,client-id = <1>;
+ 			qcom,vmid = <15>;
+ 		};
++
++		fastrpc_mem: memory@a6000000 {
++			reg = <0x0 0xa6000000 0x0 0x2000000>;
++			no-map;
++		};
+ 	};
+ 
+ 	/*
+@@ -573,6 +579,7 @@ &gmu {
+ 
+ &gpu {
+ 	status = "okay";
++	required-opps = <&rpmhpd_opp_turbo>;
+ };
+ 
+ &gpu_zap_shader {
+@@ -617,6 +624,9 @@ panel:	panel@0 {
+ 
+ 		reset-gpios = <&tlmm 6 GPIO_ACTIVE_LOW>;
+ 		
++		power-on-delay-us = <10000>;
++        reset-delay-us = <10000>;
++
+ 		pinctrl-names = "default", "sleep";
+ 		pinctrl-0 = <&panel_reset_pin &panel_te_pin>;
+ 
+@@ -791,26 +801,6 @@ &qupv3_id_2 {
+ 	status = "okay";
+ };
+ 
+-&remoteproc_adsp {
+-	status = "okay";
+-	firmware-name = "qcom/sm8150/Xiaomi/raphael/adsp.mbn";
+-};
+-
+-&remoteproc_cdsp {
+-	status = "okay";
+-	firmware-name = "qcom/sm8150/Xiaomi/raphael/cdsp.mbn";
+-};
+-
+-&remoteproc_mpss {
+-	status = "okay";
+-	firmware-name = "qcom/sm8150/Xiaomi/raphael/modem.mbn";
+-};
+-
+-&remoteproc_slpi {
+-	status = "okay";
+-	firmware-name = "qcom/sm8150/Xiaomi/raphael/slpi.mbn";
+-};
+-
+ &tlmm {
+     gpio-line-names = 
+         "NFC_ESE_SPI_MISO",     /* GPIO_0 */
+@@ -1181,3 +1171,83 @@ &wifi {
+ 
+ 	status = "okay";
+ };
++&remoteproc_slpi {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/slpi.mbn";
++	required-opps = <&rpmhpd_opp_turbo>;
++};
++
++&remoteproc_adsp {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/adsp.mbn";
++	required-opps = <&rpmhpd_opp_turbo>;
++};
++
++&remoteproc_cdsp {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/cdsp.mbn";
++	required-opps = <&rpmhpd_opp_turbo>;
++};
++
++&remoteproc_mpss {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/modem.mbn";
++    qcom,mba-firmware-name = "qcom/sm8150/Xiaomi/raphael/mba.mbn"; 
++    mboxes = <&apss_shared 12>;
++    qcom,smem-states = <&modem_smp2p_out 0>;
++    qcom,smem-state-names = "stop";
++    // 以下属性启用 MHI 功能（如果内核驱动支持）
++    qcom,use-pil;
++    qcom,is-loadable;
++	required-opps = <&rpmhpd_opp_turbo>;
++};
++
++&q6asmdai{
++	dai@0 {
++		compatible = "qcom,q6afe-dai";
++		reg = <0>;
++		direction = <2>;
++
++	};
++};
++
++&i2c1 {
++    status = "okay";
++    clock-frequency = <400000>;
++    pinctrl-names = "default";
++    pinctrl-0 = <&qup_i2c1_default>;
++
++    tfa9874: audio-codec@34 {
++        compatible = "nxp,tfa9874";
++        reg = <0x34>; 
++        #sound-dai-cells = <0>;
++        
++        vddd-supply = <&vreg_l7a_1p8>;   
++        vdda-supply = <&vreg_l10c_3p3>; 
++        reset-gpios = <&tlmm 59 GPIO_ACTIVE_HIGH>;
++        
++        firmware-name = "tfa9874.cnt";
++        status = "okay";
++    };
++ };
++
++ &sound {
++    compatible = "qcom,sm8150-sndcard";
++    model = "xiaomi-raphael";
++    audio-routing = "Speaker", "OUT";
++
++    /* 定义 DAI (Digital Audio Interface) 链路 */
++    dai-link@0 {
++        reg = <0>;
++        link-name = "Primary MI2S";
++        cpu {
++            sound-dai = <&q6asmdai 0>;
++        };
++        platform {
++            sound-dai = <&q6asmdai 0>;
++        };
++        codec {
++            sound-dai = <&tfa9874>;
++        };
++    };
++};

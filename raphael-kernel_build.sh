@@ -54,9 +54,11 @@ else
 fi
 
 # 应用补丁
-patch linux/scripts/package/builddeb < builddeb.patch
-patch linux/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts < dts.patch
-patch linux/scripts/package/mkdebian < mkdebian.patch
+patch linux/scripts/package/builddeb < patchs/builddeb.patch
+patch linux/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts < patchs/dts.patch
+patch linux/arch/arm64/boot/dts/qcom/sm8150.dtsi < patchs/sm8150.dts.patch
+
+patch linux/scripts/package/mkdebian < patchs/mkdebian.patch
 cd linux
 git add .
 git commit -m "patches: builddeb dts mkdebian"

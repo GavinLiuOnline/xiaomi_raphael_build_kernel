@@ -1,0 +1,137 @@
+index 4ffeac7ad..a4cd29d6a 100644
+--- linux/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
++++ linux/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
+@@ -175,14 +175,19 @@ cont_splash_mem: memory@9c000000 {
+ 			no-map;
+ 		};
+ 
++		fastrpc_mem: memory@a2000000 {
++			reg = <0x0 0xa2000000 0x0 0x2000000>;
++			no-map;
++		};
++
+ 		cdsp_sec_mem: memory@a4c00000 {
+ 			reg = <0x0 0xa4c00000 0x0 0x3c00000>;
+ 			no-map;
+ 		};
+ 		
+-		ramoops@a1600000 {
++		ramoops@ae000000 {
+ 			compatible = "ramoops";
+-			reg = <0x0 0xa1600000 0x0 0x800000>;
++			reg = <0x0 0xae000000 0x0 0x800000>;
+ 			console-size = <0x400000>;
+ 			ecc-size = <0>;
+ 			ftrace-size = <0>;
+@@ -791,26 +796,6 @@ &qupv3_id_2 {
+ 	status = "okay";
+ };
+ 
+-&remoteproc_adsp {
+-	status = "okay";
+-	firmware-name = "qcom/sm8150/Xiaomi/raphael/adsp.mbn";
+-};
+-
+-&remoteproc_cdsp {
+-	status = "okay";
+-	firmware-name = "qcom/sm8150/Xiaomi/raphael/cdsp.mbn";
+-};
+-
+-&remoteproc_mpss {
+-	status = "okay";
+-	firmware-name = "qcom/sm8150/Xiaomi/raphael/modem.mbn";
+-};
+-
+-&remoteproc_slpi {
+-	status = "okay";
+-	firmware-name = "qcom/sm8150/Xiaomi/raphael/slpi.mbn";
+-};
+-
+ &tlmm {
+     gpio-line-names = 
+         "NFC_ESE_SPI_MISO",     /* GPIO_0 */
+@@ -1181,3 +1166,83 @@ &wifi {
+ 
+ 	status = "okay";
+ };
++&remoteproc_slpi {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/slpi.mbn";
++};
++
++&remoteproc_adsp {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/adsp.mbn";
++};
++
++&remoteproc_cdsp {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/cdsp.mbn";
++};
++
++&remoteproc_mpss {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/modem.mbn";
++};
++
++&q6asmdai{
++	dai@0 {
++		compatible = "qcom,q6afe-dai";
++		reg = <0>;
++		direction = <2>;
++
++	};
++};
++
++&{/soc@0/remoteproc_slpi/glink-edge/fastrpc} {
++    memory-region = <&fastrpc_mem>;
++};
++&{/soc@0/remoteproc_adsp/glink-edge/fastrpc} {
++    memory-region = <&fastrpc_mem>;
++};
++&{/soc@0/remoteproc_cdsp/glink-edge/fastrpc} {
++    memory-region = <&fastrpc_mem>;
++};
++
++
++&i2c1 {
++    status = "okay";
++    clock-frequency = <400000>;
++    pinctrl-names = "default";
++    pinctrl-0 = <&qup_i2c1_default>;
++
++    tfa9874: audio-codec@34 {
++        compatible = "nxp,tfa9874";
++        reg = <0x34>; 
++        #sound-dai-cells = <0>;
++        
++        vddd-supply = <&vreg_l7a_1p8>;   
++        vdda-supply = <&vreg_l10c_3p3>; 
++        reset-gpios = <&tlmm 59 GPIO_ACTIVE_HIGH>;
++        
++        firmware-name = "tfa9874.cnt";
++        status = "okay";
++    };
++ };
++
++ &sound {
++    compatible = "qcom,sm8150-sndcard";
++    model = "xiaomi-raphael";
++    audio-routing = "Speaker", "OUT";
++
++    /* 定义 DAI (Digital Audio Interface) 链路 */
++    dai-link@0 {
++        reg = <0>;
++        link-name = "Primary MI2S";
++        cpu {
++            sound-dai = <&q6asmdai 0>;
++        };
++        platform {
++            sound-dai = <&q6asmdai 0>;
++        };
++        codec {
++            sound-dai = <&tfa9874>;
++        };
++    };
++};
+\ No newline at end of file
