@@ -59,6 +59,8 @@ patch linux/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts < patchs/dts.patc
 patch linux/arch/arm64/boot/dts/qcom/sm8150.dtsi < patchs/sm8150.dts.patch
 patch linux/sound/soc/qcom/sm8150.c < patchs/sm8150-snd.patch
 patch linux/sound/soc/codecs/tfa9872.c < patchs/tfa9872-reset.patch
+patch linux/sound/soc/qcom/qdsp6/q6afe-dai.c < patchs/q6afe-dai.patch
+patch linux/sound/soc/qcom/qdsp6/q6afe.c < patchs/q6afe.patch
 patch linux/scripts/package/mkdebian < patchs/mkdebian.patch
 cd linux
 git add .
