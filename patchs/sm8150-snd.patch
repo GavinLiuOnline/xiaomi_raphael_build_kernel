@@ -1,5 +1,5 @@
 diff --git a/sound/soc/qcom/sm8150.c b/sound/soc/qcom/sm8150.c
-index 8ad61345b..d315953bc 100644
+index 8ad61345b..372e1b7bf 100644
 --- a/sound/soc/qcom/sm8150.c
 +++ b/sound/soc/qcom/sm8150.c
 @@ -35,15 +35,6 @@ struct sm8150_snd_data {
@@ -18,9 +18,12 @@ index 8ad61345b..d315953bc 100644
  static int sm8150_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
  				     struct snd_pcm_hw_params *params)
  {
-@@ -56,270 +47,95 @@ static int sm8150_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+@@ -54,272 +45,100 @@ static int sm8150_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
+ 
  	rate->min = rate->max = 48000;
- 	channels->min = channels->max = 2;
+-	channels->min = channels->max = 2;
++	channels->min = channels->max = 1;
  	snd_mask_none(fmt);
 -	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S24_LE);
 -
@@ -128,8 +131,8 @@ index 8ad61345b..d315953bc 100644
 -			goto end;
 -		}
 -	}
-+	/* Slot 0 (and 4 for R ch) — TFA9874 amp listens on slot 0 */
-+	slot_mask = BIT(0) | BIT(4);
++	/* TFA9874 listens on TDM slot 0 (cf. Android QUAT TDM mono) */
++	slot_mask = BIT(0);
  
 -	for_each_rtd_codec_dais(rtd, j, codec_dai) {
 -		/* call dai driver's set_sysclk() callback */
@@ -138,9 +141,13 @@ index 8ad61345b..d315953bc 100644
 -		if (ret < 0) {
 -			dev_err(codec_dai->dev, "fail to set sysclk, ret %d\n",
 -				ret);
--			return ret;
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		ret = snd_soc_dai_set_tdm_slot(cpu_dai, 0, slot_mask, 8,
++					       slot_width);
++		if (ret < 0)
+ 			return ret;
 -		}
--
+ 
 -		/* call component driver's set_sysclk() callback */
 -		ret = snd_soc_component_set_sysclk(codec_dai->component,
 -						   0, 0,
@@ -148,9 +155,8 @@ index 8ad61345b..d315953bc 100644
 -		if (ret < 0) {
 -			dev_err(codec_dai->dev, "fail to set component sysclk, ret %d\n",
 -				ret);
-+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-+		ret = snd_soc_dai_set_tdm_slot(cpu_dai, 0, slot_mask, 8,
-+					       slot_width);
++		ret = snd_soc_dai_set_channel_map(cpu_dai, 0, NULL, channels,
++						  tdm_slot_offset);
 +		if (ret < 0)
  			return ret;
 -		}
@@ -162,11 +168,10 @@ index 8ad61345b..d315953bc 100644
 -		if (ret < 0) {
 -			dev_err(codec_dai->dev, "fail to set channel map, ret %d\n",
 -				ret);
-+		ret = snd_soc_dai_set_channel_map(cpu_dai, 0, NULL, channels,
-+						  tdm_slot_offset);
-+		if (ret < 0)
- 			return ret;
+-			return ret;
 -		}
++		dev_info(rtd->dev, "TDM: ch=%d mask=0x%x slot0=%u\n",
++			 channels, slot_mask, tdm_slot_offset[0]);
  	}
  
 -end:
@@ -316,7 +321,7 @@ index 8ad61345b..d315953bc 100644
  		break;
  	}
  	return 0;
-@@ -328,87 +144,25 @@ static int sm8150_snd_startup(struct snd_pcm_substream *substream)
+@@ -328,87 +147,25 @@ static int sm8150_snd_startup(struct snd_pcm_substream *substream)
  static void sm8150_snd_shutdown(struct snd_pcm_substream *substream)
  {
  	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
@@ -409,7 +414,7 @@ index 8ad61345b..d315953bc 100644
  	.startup = sm8150_snd_startup,
  	.shutdown = sm8150_snd_shutdown,
  };
-@@ -419,7 +173,10 @@ static void sm8150_add_be_ops(struct snd_soc_card *card)
+@@ -419,7 +176,10 @@ static void sm8150_add_be_ops(struct snd_soc_card *card)
  	int i;
  
  	for_each_card_prelinks(card, i, link) {
@@ -421,7 +426,7 @@ index 8ad61345b..d315953bc 100644
  			link->be_hw_params_fixup = sm8150_be_hw_params_fixup;
  			link->ops = &sm8150_be_ops;
  		}
-@@ -438,7 +195,6 @@ static int sm8150_platform_probe(struct platform_device *pdev)
+@@ -438,7 +198,6 @@ static int sm8150_platform_probe(struct platform_device *pdev)
  	if (!card)
  		return -ENOMEM;
  

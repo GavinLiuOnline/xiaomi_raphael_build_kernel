@@ -1,8 +1,8 @@
 diff --git a/sound/soc/codecs/tfa9872.c b/sound/soc/codecs/tfa9872.c
-index 26bed4305..c52bdd9c1 100644
+index 26bed4305..62465a128 100644
 --- a/sound/soc/codecs/tfa9872.c
 +++ b/sound/soc/codecs/tfa9872.c
-@@ -6,11 +6,36 @@
+@@ -6,11 +6,37 @@
   */
  
  #include <linux/bitfield.h>
@@ -35,11 +35,12 @@ index 26bed4305..c52bdd9c1 100644
 +};
 +
 +static int tfa987x_init_tdm(struct regmap *rmap);
++static void tfa987x_enable_audio_path(struct regmap *rmap);
 +
  #define TFA987X_SYS_CTRL0		0x00
  #define TFA987X_SYS_CTRL0_PWDN_MSK	BIT(0)
  #define TFA987X_SYS_CTRL0_I2CR_MSK	BIT(1)
-@@ -85,28 +110,61 @@
+@@ -85,28 +111,88 @@
  #define TFA9874_DCDC_CTRL6_DCVOF_MSK	GENMASK(8,  3)
  #define TFA9874_DCDC_CTRL6_DCVOS_MSK	GENMASK(14,  9)
  
@@ -76,6 +77,29 @@ index 26bed4305..c52bdd9c1 100644
 +		tfa987x_power(component, false);
 +	else
 +		tfa987x_power(component, true);
+ 
+ 	return 0;
+ }
+ 
++static int tfa987x_prepare(struct snd_pcm_substream *substream,
++			   struct snd_soc_dai *codec_dai)
++{
++	struct snd_soc_component *component = codec_dai->component;
++	struct regmap *rmap = dev_get_regmap(component->dev, NULL);
++	int ret;
++
++	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
++		return 0;
++
++	ret = tfa987x_init_tdm(rmap);
++	if (ret)
++		return ret;
++
++	tfa987x_enable_audio_path(rmap);
++	regmap_update_bits(rmap, TFA987X_AMP_CFG,
++			   TFA987X_AMP_CFG_GAIN_MSK,
++			   FIELD_PREP(TFA987X_AMP_CFG_GAIN_MSK, 0x60));
++	tfa987x_power(component, true);
 +
 +	return 0;
 +}
@@ -83,12 +107,16 @@ index 26bed4305..c52bdd9c1 100644
 +static int tfa987x_startup(struct snd_pcm_substream *substream,
 +			   struct snd_soc_dai *codec_dai)
 +{
-+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		struct regmap *rmap = dev_get_regmap(codec_dai->component->dev, NULL);
++
++		tfa987x_enable_audio_path(rmap);
 +		tfa987x_power(codec_dai->component, true);
- 
- 	return 0;
- }
- 
++	}
++
++	return 0;
++}
++
 +static void tfa987x_shutdown(struct snd_pcm_substream *substream,
 +			     struct snd_soc_dai *codec_dai)
 +{
@@ -107,23 +135,25 @@ index 26bed4305..c52bdd9c1 100644
  };
  
  static const struct snd_soc_component_driver tfa987x_component = {
-@@ -120,6 +178,8 @@ static const struct snd_soc_component_driver tfa987x_component = {
+@@ -120,6 +206,9 @@ static const struct snd_soc_component_driver tfa987x_component = {
  };
  
  static const struct snd_soc_dai_ops tfa987x_dai_ops = {
 +	.startup = tfa987x_startup,
++	.prepare = tfa987x_prepare,
 +	.shutdown = tfa987x_shutdown,
  	.mute_stream = tfa987x_digital_mute,
  };
  
-@@ -143,6 +203,236 @@ static const struct regmap_config tfa987x_regmap_config = {
+@@ -143,6 +232,246 @@ static const struct regmap_config tfa987x_regmap_config = {
  	.max_register = 0xff,
  };
  
 +static bool tfa987x_cnt_skip_reg(u8 addr)
 +{
-+	/* Never let cnt override power/TDM routing */
-+	if (addr <= 0x05 || (addr >= 0x20 && addr <= 0x27))
++	/* Never let cnt override power/TDM routing or audio path */
++	if (addr <= 0x05 || (addr >= 0x20 && addr <= 0x27) ||
++	    addr == TFA987X_AUDIO_CTRL || addr == TFA987X_AMP_CFG)
 +		return true;
 +	return false;
 +}
@@ -156,6 +186,7 @@ index 26bed4305..c52bdd9c1 100644
 +	if (ret)
 +		return ret;
 +
++	/* SPKE only — upstream default; edge bits depend on ADSP TDM ctrl */
 +	ret = regmap_update_bits(rmap, TFA987X_TDM_CFG3,
 +				 TFA987X_TDM_CFG3_SPKE_MSK |
 +				 TFA987X_TDM_CFG3_DCE_MSK |
@@ -174,6 +205,14 @@ index 26bed4305..c52bdd9c1 100644
 +	return regmap_update_bits(rmap, TFA987X_SYS_CTRL2,
 +				  TFA987X_SYS_CTRL2_AUDFS_MSK,
 +				  FIELD_PREP(TFA987X_SYS_CTRL2_AUDFS_MSK, 1));
++}
++
++static void tfa987x_enable_audio_path(struct regmap *rmap)
++{
++	regmap_update_bits(rmap, TFA987X_AUDIO_CTRL,
++			   TFA987X_AUDIO_CTRL_BSSS_MSK |
++			   TFA9872_AUDIO_CTRL_INTSMUTE_MSK,
++			   TFA987X_AUDIO_CTRL_BSSS_MSK);
 +}
 +
 +static int tfa987x_apply_cnt_patch(struct regmap *rmap,
@@ -353,7 +392,7 @@ index 26bed4305..c52bdd9c1 100644
  static bool tfa987x_setup_dcdc(struct device *dev, struct regmap *rmap, u16 rev)
  {
  	u32 mcc, dcvof, dcvos, dctrip, dctrip2 = 0;
-@@ -219,9 +509,23 @@ static int tfa987x_i2c_probe(struct i2c_client *i2c)
+@@ -219,9 +548,23 @@ static int tfa987x_i2c_probe(struct i2c_client *i2c)
  {
  	struct device *dev = &i2c->dev;
  	struct regmap *rmap;
@@ -377,7 +416,7 @@ index 26bed4305..c52bdd9c1 100644
  	rmap = devm_regmap_init_i2c(i2c, &tfa987x_regmap_config);
  	if (IS_ERR(rmap))
  		return PTR_ERR(rmap);
-@@ -256,29 +560,27 @@ static int tfa987x_i2c_probe(struct i2c_client *i2c)
+@@ -256,29 +599,26 @@ static int tfa987x_i2c_probe(struct i2c_client *i2c)
  	regmap_update_bits(rmap, TFA987X_AUDIO_CTRL,
  				 TFA987X_AUDIO_CTRL_DPSA_MSK, 0);
  
@@ -422,12 +461,11 @@ index 26bed4305..c52bdd9c1 100644
 +		return ret;
 +
 +	/* cnt may set internal mute; force output enabled */
-+	regmap_update_bits(rmap, TFA987X_AUDIO_CTRL,
-+			   TFA9872_AUDIO_CTRL_INTSMUTE_MSK, 0);
++	tfa987x_enable_audio_path(rmap);
  
  	if ((rev & 0xff) == 0x72)
  		regmap_update_bits(rmap, TFA987X_MODE1_DET1,
-@@ -293,6 +595,19 @@ static int tfa987x_i2c_probe(struct i2c_client *i2c)
+@@ -293,6 +633,19 @@ static int tfa987x_i2c_probe(struct i2c_client *i2c)
  				 TFA987X_SYS_CTRL1_MANSCONF_MSK,
  				 TFA987X_SYS_CTRL1_MANSCONF_MSK);
  
@@ -447,7 +485,7 @@ index 26bed4305..c52bdd9c1 100644
  	return devm_snd_soc_register_component(dev, &tfa987x_component,
  						    &tfa987x_dai, 1);
  }
-@@ -315,3 +630,4 @@ module_i2c_driver(tfa987x_i2c_driver);
+@@ -315,3 +668,4 @@ module_i2c_driver(tfa987x_i2c_driver);
  
  MODULE_DESCRIPTION("ASoC NXP Semiconductors TFA9872/TFA9874 driver");
  MODULE_LICENSE("GPL v2");

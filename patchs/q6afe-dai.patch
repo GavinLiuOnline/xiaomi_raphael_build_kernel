@@ -1,0 +1,76 @@
+diff --git a/sound/soc/qcom/qdsp6/q6afe-dai.c b/sound/soc/qcom/qdsp6/q6afe-dai.c
+index 0f47aadaa..550fefe9b 100644
+--- a/sound/soc/qcom/qdsp6/q6afe-dai.c
++++ b/sound/soc/qcom/qdsp6/q6afe-dai.c
+@@ -194,6 +194,8 @@ static int q6tdm_set_tdm_slot(struct snd_soc_dai *dai,
+ 		tdm->slot_width = slot_width;
+ 		/* TDM RX dais ids are even and tx are odd */
+ 		tdm->slot_mask = ((dai->id & 0x1) ? tx_mask : rx_mask) & cap_mask;
++		dev_info(dai->dev, "TDM set_slot: dai=0x%x slots=%d width=%d mask=0x%x\n",
++			 dai->id, tdm->nslots_per_frame, tdm->slot_width, tdm->slot_mask);
+ 		break;
+ 	default:
+ 		dev_err(dai->dev, "%s: invalid dai id 0x%x\n",
+@@ -255,6 +257,10 @@ static int q6tdm_set_channel_map(struct snd_soc_dai *dai,
+ 			tdm->num_channels = rx_num;
+ 		}
+ 
++		dev_info(dai->dev, "TDM chmap: dai=0x%x num_ch=%d ch0=%d ch1=%d ch2=%d ch3=%d\n",
++			 dai->id, tdm->num_channels,
++			 tdm->ch_mapping[0], tdm->ch_mapping[1],
++			 tdm->ch_mapping[2], tdm->ch_mapping[3]);
+ 		break;
+ 	default:
+ 		dev_err(dai->dev, "%s: invalid dai id 0x%x\n",
+@@ -278,6 +284,16 @@ static int q6tdm_hw_params(struct snd_pcm_substream *substream,
+ 	tdm->data_align_type = dai_data->priv[dai->id].data_align;
+ 	tdm->sync_src = dai_data->priv[dai->id].sync_src;
+ 	tdm->sync_mode = dai_data->priv[dai->id].sync_mode;
++	tdm->ctrl_data_out_enable = dai_data->priv[dai->id].data_out_enable;
++	tdm->ctrl_invert_sync_pulse = dai_data->priv[dai->id].invert_sync;
++	tdm->ctrl_sync_data_delay = dai_data->priv[dai->id].data_delay;
++	tdm->data_format = 0; /* AFE_LINEAR_PCM_DATA */
++
++	dev_info(dai->dev, "TDM hw_params: dai=0x%x bit_width=%d rate=%d ch=%d align=%d sync_src=%d sync_mode=%d ctrl_out=%d inv=%d delay=%d\n",
++		 dai->id, tdm->bit_width, tdm->sample_rate, tdm->num_channels,
++		 tdm->data_align_type, tdm->sync_src, tdm->sync_mode,
++		 tdm->ctrl_data_out_enable, tdm->ctrl_invert_sync_pulse,
++		 tdm->ctrl_sync_data_delay);
+ 
+ 	return 0;
+ }
+@@ -376,6 +392,7 @@ static void q6afe_dai_shutdown(struct snd_pcm_substream *substream,
+ 	if (!dai_data->is_port_started[dai->id])
+ 		return;
+ 
++	dev_info(dai->dev, "TDM shutdown: dai=0x%x\n", dai->id);
+ 	rc = q6afe_port_stop(dai_data->port[dai->id]);
+ 	if (rc < 0)
+ 		dev_err(dai->dev, "fail to close AFE port (%d)\n", rc);
+@@ -420,9 +437,16 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
+ 		}
+ 		break;
+ 	case PRIMARY_TDM_RX_0 ... QUINARY_TDM_TX_7:
++	{
++		struct q6afe_tdm_cfg *tdm = &dai_data->port_config[dai->id].tdm;
++		dev_info(dai->dev, "TDM prepare: dai=0x%x slots=%d slot_width=%d slot_mask=0x%x ch=%d rate=%d width=%d\n",
++			 dai->id, tdm->nslots_per_frame, tdm->slot_width,
++			 tdm->slot_mask, tdm->num_channels,
++			 tdm->sample_rate, tdm->bit_width);
+ 		q6afe_tdm_port_prepare(dai_data->port[dai->id],
+ 					&dai_data->port_config[dai->id].tdm);
+ 		break;
++	}
+ 	case WSA_CODEC_DMA_RX_0 ... RX_CODEC_DMA_RX_7:
+ 		q6afe_cdc_dma_port_prepare(dai_data->port[dai->id],
+ 					   &dai_data->port_config[dai->id].dma_cfg);
+@@ -441,6 +465,9 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
+ 		return rc;
+ 	}
+ 	dai_data->is_port_started[dai->id] = true;
++	dev_info(dai->dev, "AFE port start: dai=0x%x started=%d\n",
++		 dai->id,
++		 dai_data->is_port_started[dai->id]);
+ 
+ 	return 0;
+ }

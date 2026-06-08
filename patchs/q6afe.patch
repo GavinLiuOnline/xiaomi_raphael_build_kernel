@@ -1,0 +1,32 @@
+
+diff --git a/sound/soc/qcom/qdsp6/q6afe.c b/sound/soc/qcom/qdsp6/q6afe.c
+index 43d877322..5e7c5ea4e 100644
+--- a/sound/soc/qcom/qdsp6/q6afe.c
++++ b/sound/soc/qcom/qdsp6/q6afe.c
+@@ -1359,6 +1359,9 @@ void q6afe_tdm_port_prepare(struct q6afe_port *port,
+ 
+ 	pcfg->tdm_cfg.slot_width = cfg->slot_width;
+ 	pcfg->tdm_cfg.slot_mask = cfg->slot_mask;
++	pcfg->tdm_cfg.ctrl_data_out_enable = cfg->ctrl_data_out_enable;
++	pcfg->tdm_cfg.ctrl_invert_sync_pulse = cfg->ctrl_invert_sync_pulse;
++	pcfg->tdm_cfg.ctrl_sync_data_delay = cfg->ctrl_sync_data_delay;
+ 	port->scfg = kzalloc_obj(*port->scfg);
+ 	if (!port->scfg)
+ 		return;
+@@ -1369,6 +1372,16 @@ void q6afe_tdm_port_prepare(struct q6afe_port *port,
+ 	port->scfg->data_align_type = cfg->data_align_type;
+ 	memcpy(port->scfg->ch_mapping, cfg->ch_mapping,
+ 			sizeof(u16) * AFE_PORT_MAX_AUDIO_CHAN_CNT);
++	dev_info(port->afe->dev, "TDM port_prepare: port=0x%x ch=%d rate=%d width=%d slots=%d slot_w=%d mask=0x%x ctrl_out=%d inv=%d delay=%d ch_map=[%d,%d,%d,%d]\n",
++		 port->id, pcfg->tdm_cfg.num_channels,
++		 pcfg->tdm_cfg.sample_rate, pcfg->tdm_cfg.bit_width,
++		 pcfg->tdm_cfg.nslots_per_frame, pcfg->tdm_cfg.slot_width,
++		 pcfg->tdm_cfg.slot_mask,
++		 pcfg->tdm_cfg.ctrl_data_out_enable,
++		 pcfg->tdm_cfg.ctrl_invert_sync_pulse,
++		 pcfg->tdm_cfg.ctrl_sync_data_delay,
++		 port->scfg->ch_mapping[0], port->scfg->ch_mapping[1],
++		 port->scfg->ch_mapping[2], port->scfg->ch_mapping[3]);
+ }
+ EXPORT_SYMBOL_GPL(q6afe_tdm_port_prepare);
+ 

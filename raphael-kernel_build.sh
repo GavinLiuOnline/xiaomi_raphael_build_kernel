@@ -60,6 +60,9 @@ patch linux/arch/arm64/boot/dts/qcom/sm8150.dtsi < patchs/sm8150.dts.patch
 patch linux/sound/soc/qcom/sm8150.c < patchs/sm8150-snd.patch
 patch linux/sound/soc/codecs/tfa9872.c < patchs/tfa9872.patch
 patch linux/sound/soc/qcom/qdsp6/q6asm-dai.c < patchs/q6asm-dai.patch
+patch linux/sound/soc/qcom/qdsp6/q6afe.h < patchs/q6afe.h.patch
+patch linux/sound/soc/qcom/qdsp6/q6afe.c < patchs/q6afe.patch
+patch linux/sound/soc/qcom/qdsp6/q6afe-dai.c < patchs/q6afe-dai.patch
 patch linux/scripts/package/mkdebian < patchs/mkdebian.patch
 cd linux
 git add .
