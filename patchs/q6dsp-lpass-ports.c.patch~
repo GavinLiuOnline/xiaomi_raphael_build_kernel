@@ -1,3 +1,203 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
+index 04646b389..485a40b86 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
+@@ -11,6 +11,7 @@
+ #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+ #include <dt-bindings/usb/pd.h>
++#include <dt-bindings/sound/qcom,q6afe.h>
+ #include "sm8150.dtsi"
+ #include "pm8150.dtsi"
+ #include "pm8150b.dtsi"
+@@ -793,7 +794,7 @@ &qupv3_id_2 {
+ 
+ &remoteproc_adsp {
+ 	status = "okay";
+-	firmware-name = "qcom/sm8150/Xiaomi/raphael/adsp.mbn";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/adsp.mdt";
+ };
+ 
+ &remoteproc_cdsp {
+@@ -862,7 +863,7 @@ &tlmm {
+         "BT_HCI_UART_RXD",      /* GPIO_46 */
+         "NFC_IRQ",              /* GPIO_47 */
+         "NFC_DWL_REQ",          /* GPIO_48 */
+-        "AUDIO_SWITCH_EN",      /* GPIO_49 */
++        "AUDIO_SWITCH_EN",      /* GPIO_49, ISL54062 USB_SBU<->DBG_UART */
+         "WLAN_SW_CTRL",         /* GPIO_50 */
+         "APPS_I2C_SDA",         /* GPIO_51 */
+         "APPS_I2C_SCL",         /* GPIO_52 */
+@@ -1009,6 +1010,29 @@ panel_te_pin: panel-te-state {
+         bias-pull-down;
+     };
+ 
++    /* gpio137/138=BCK/WS, gpio139=DOUT(SD1), gpio140=DIN, gpio141=INT */
++    quat_tdm_active: quat-tdm-active-state {
++        pins = "gpio137", "gpio138";
++        function = "qua_mi2s";
++        drive-strength = <8>;
++        bias-disable;
++        output-high;
++    };
++
++    quat_tdm_sd1_active: quat-tdm-sd1-active-state {
++        pins = "gpio139";
++        function = "qua_mi2s";
++        drive-strength = <8>;
++        bias-disable;
++    };
++
++    quat_tdm_sd2_active: quat-tdm-sd2-active-state {
++        pins = "gpio140";
++        function = "qua_mi2s";
++        drive-strength = <8>;
++        bias-disable;
++    };
++
+     qup_uart13_default: qup-uart13-default-state {
+ 	cts-pins {
+ 		pins = "gpio43";
+@@ -1181,3 +1205,88 @@ &wifi {
+ 
+ 	status = "okay";
+ };
++
++&remoteproc_adsp {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/adsp.mdt";
++};
++
++&remoteproc_cdsp {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/cdsp.mbn";
++};
++
++&remoteproc_mpss {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/modem.mdt";
++};
++
++&remoteproc_slpi {
++	status = "okay";
++	firmware-name = "qcom/sm8150/Xiaomi/raphael/slpi_rp.mdt";
++};
++
++&q6afedai {
++	/* Android: speaker on QUAT_MI2S_RX; gpio139 = SD1 (SPKR_I2S_DOUT) */
++	dai@16 {
++		reg = <QUATERNARY_MI2S_RX>;
++		qcom,sd-lines = <1>;
++	};
++};
++
++&q6asmdai {
++	dai@0 {
++		reg = <0>;
++	};
++	dai@1 {
++		reg = <1>;
++	};
++};
++
++&qupv3_id_0 {
++	status = "okay";
++};
++
++&i2c1 {
++	status = "okay";
++	tfa9874: audio-codec@34 {
++		compatible = "nxp,tfa98xx", "nxp,tfa9874";
++		reg = <0x34>;
++		#sound-dai-cells = <0>;
++		vddd-supply = <&vreg_l7a_1p8>;
++		vdda-supply = <&vreg_l10c_3p3>;
++		reset-gpios = <&tlmm 59 GPIO_ACTIVE_HIGH>;
++		interrupt-parent = <&tlmm>;
++		interrupts = <141 IRQ_TYPE_LEVEL_LOW>;
++		status = "okay";
++	};
++};
++
++&sound {
++	compatible = "qcom,sm8150-sndcard";
++	model = "xiaomi-raphael";
++	pinctrl-0 = <&quat_tdm_active &quat_tdm_sd1_active>;
++	pinctrl-names = "default";
++	clocks = <&q6afecc 102 0>;
++	clock-names = "lpass_macro";
++	audio-routing = "HiFi Playback", "Quaternary MI2S Playback", "Speaker", "HiFi Playback";
++	mm1-dai-link {
++		link-name = "MultiMedia1";
++		cpu {
++			sound-dai = <&q6asmdai 0>;
++		};
++	};
++	speaker-dai-link {
++		no-pcm;
++		link-name = "Speaker Playback";
++		cpu {
++			sound-dai = <&q6afedai QUATERNARY_MI2S_RX>;
++		};
++		platform {
++			sound-dai = <&q6routing>;
++		};
++		codec {
++			sound-dai = <&tfa9874>;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150.dtsi b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+index 079e2f0a6..bb7ad27fe 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+@@ -794,6 +794,12 @@ qseecom_mem: memory@9e400000 {
+ 			reg = <0x0 0x9e400000 0x0 0x1400000>;
+ 			no-map;
+ 		};
++
++		fastrpc_mem: memory@ae800000 {
++			reg = <0x0 0xae800000 0x0 0x2000000>;
++			no-map;
++		};
++
+ 	};
+ 
+ 	smem {
+@@ -2271,7 +2277,7 @@ glink-edge {
+ 				label = "dsps";
+ 				qcom,remote-pid = <3>;
+ 				mboxes = <&apss_shared 24>;
+-
++				
+ 				fastrpc {
+ 					compatible = "qcom,fastrpc";
+ 					qcom,glink-channels = "fastrpcglink-apps-dsp";
+@@ -2279,6 +2285,8 @@ fastrpc {
+ 					qcom,non-secure-domain;
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
++					  
++					qcom,vmids = <0x3 0xf 0x5 0x6>;  
+ 
+ 					compute-cb@1 {
+ 						compatible = "qcom,fastrpc-compute-cb";
+@@ -3455,6 +3463,7 @@ fastrpc {
+ 					qcom,non-secure-domain;
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
++					
+ 
+ 					compute-cb@1 {
+ 						compatible = "qcom,fastrpc-compute-cb";
+@@ -4499,6 +4508,7 @@ fastrpc {
+ 					qcom,non-secure-domain;
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
++					
+ 
+ 					compute-cb@3 {
+ 						compatible = "qcom,fastrpc-compute-cb";
 diff --git a/sound/soc/codecs/tfa9872.c b/sound/soc/codecs/tfa9872.c
 index 26bed4305..f559ff106 100644
 --- a/sound/soc/codecs/tfa9872.c
@@ -684,3 +884,176 @@ index 26bed4305..f559ff106 100644
 +MODULE_AUTHOR("sound_fix");
 +MODULE_DESCRIPTION("ASoC NXP TFA9874 driver (cnt-based register init)");
  MODULE_LICENSE("GPL v2");
+diff --git a/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c b/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c
+index 4eed54b07..a1f0d4206 100644
+--- a/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c
++++ b/sound/soc/qcom/qdsp6/q6dsp-lpass-ports.c
+@@ -434,7 +434,8 @@ static struct snd_soc_dai_driver q6dsp_audio_fe_dais[] = {
+ 			.stream_name = "Quaternary MI2S Playback",
+ 			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
+ 				 SNDRV_PCM_RATE_16000,
+-			.formats = SNDRV_PCM_FMTBIT_S16_LE,
++			.formats = SNDRV_PCM_FMTBIT_S16_LE |
++				   SNDRV_PCM_FMTBIT_S24_LE,
+ 			.channels_min = 1,
+ 			.channels_max = 8,
+ 			.rate_min =     8000,
+diff --git a/sound/soc/qcom/sm8150.c b/sound/soc/qcom/sm8150.c
+index 8ad61345b..3ef43aa18 100644
+--- a/sound/soc/qcom/sm8150.c
++++ b/sound/soc/qcom/sm8150.c
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include <dt-bindings/sound/qcom,q6afe.h>
++#include <linux/clk.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
+ #include <linux/of_device.h>
+@@ -27,9 +28,13 @@ struct sm8150_snd_data {
+ 	struct snd_soc_jack jack;
+ 	bool jack_setup;
+ 	bool slim_port_setup;
++	bool lpass_macro_enabled;
+ 	bool stream_prepared[AFE_PORT_MAX];
+ 	struct snd_soc_card *card;
++	struct clk *lpass_macro;
+ 	uint32_t quat_tdm_clk_count;
++	uint32_t quat_mi2s_clk_count;
++	uint32_t lpass_macro_count;
+ 	struct sdw_stream_runtime *sruntime[AFE_PORT_MAX];
+ };
+ 
+@@ -192,6 +197,58 @@ static int sm8150_tdm_snd_hw_params(struct snd_pcm_substream *substream,
+ 	return ret;
+ }
+ 
++/* TFA9874 on QUAT_MI2S_RX: standard I2S, S24_LE, 48kHz, 2ch */
++static int sm8150_mi2s_snd_hw_params(struct snd_pcm_substream *substream,
++				     struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *codec_dai;
++	int ret, j;
++
++	for_each_rtd_codec_dais(rtd, j, codec_dai) {
++		ret = snd_soc_dai_set_sysclk(codec_dai, 0,
++					     12288000, SND_SOC_CLOCK_IN);
++		if (ret < 0)
++			dev_info(codec_dai->dev, "set_sysclk not supported (%d)\n", ret);
++	}
++
++	return 0;
++}
++
++static int sm8150_vote_quat_mi2s_clks(struct snd_soc_dai *cpu_dai,
++				      unsigned int freq)
++{
++	int ret;
++
++	ret = snd_soc_dai_set_sysclk(cpu_dai, Q6AFE_LPASS_CLK_ID_QUAD_MI2S_IBIT,
++				     freq, SNDRV_PCM_STREAM_PLAYBACK);
++	if (ret < 0) {
++		dev_err(cpu_dai->dev, "QUAD MI2S IBIT %u Hz failed: %d\n",
++			freq, ret);
++		return ret;
++	}
++
++	ret = snd_soc_dai_set_sysclk(cpu_dai, Q6AFE_LPASS_CLK_ID_QUAD_MI2S_EBIT,
++				     freq, SNDRV_PCM_STREAM_PLAYBACK);
++	if (ret < 0) {
++		dev_err(cpu_dai->dev, "QUAD MI2S EBIT %u Hz failed: %d\n",
++			freq, ret);
++		return ret;
++	}
++
++	ret = snd_soc_dai_set_sysclk(cpu_dai, LPAIF_BIT_CLK,
++				     freq, SNDRV_PCM_STREAM_PLAYBACK);
++	if (ret < 0) {
++		dev_err(cpu_dai->dev, "QUAD MI2S LPAIF_BIT_CLK %u Hz failed: %d\n",
++			freq, ret);
++		return ret;
++	}
++
++	dev_info(cpu_dai->dev, "QUAD MI2S clocks %s at %u Hz\n",
++		 freq ? "ON" : "OFF", freq);
++	return 0;
++}
++
+ static int sm8150_snd_hw_params(struct snd_pcm_substream *substream,
+ 					struct snd_pcm_hw_params *params)
+ {
+@@ -200,6 +257,9 @@ static int sm8150_snd_hw_params(struct snd_pcm_substream *substream,
+ 	int ret = 0;
+ 
+ 	switch (cpu_dai->id) {
++	case QUATERNARY_MI2S_RX:
++		ret = sm8150_mi2s_snd_hw_params(substream, params);
++		break;
+ 	case QUATERNARY_TDM_RX_0:
+ 	case QUATERNARY_TDM_TX_0:
+ 		ret = sm8150_tdm_snd_hw_params(substream, params);
+@@ -306,6 +366,23 @@ static int sm8150_snd_startup(struct snd_pcm_substream *substream)
+ 	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+ 
+ 	switch (cpu_dai->id) {
++	case QUATERNARY_MI2S_RX: {
++		unsigned int bclk = 12288000;
++		codec_dai_fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S;
++		if (++(data->quat_mi2s_clk_count) == 1) {
++			sm8150_vote_quat_mi2s_clks(cpu_dai, bclk);
++			if (data->lpass_macro && !data->lpass_macro_enabled) {
++				int cret = clk_prepare_enable(data->lpass_macro);
++				if (!cret) {
++					data->lpass_macro_enabled = true;
++					data->lpass_macro_count = 1;
++				}
++			}
++		}
++		snd_soc_dai_set_fmt(cpu_dai, fmt);
++		snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
++		break;
++	}
+ 	case QUATERNARY_TDM_RX_0:
+ 		codec_dai_fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_DSP_A;
+ 		if (++(data->quat_tdm_clk_count) == 1) {
+@@ -333,6 +410,17 @@ static void sm8150_snd_shutdown(struct snd_pcm_substream *substream)
+ 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+ 
+ 	switch (cpu_dai->id) {
++	case QUATERNARY_MI2S_RX:
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++			if (data->quat_mi2s_clk_count > 0 &&
++			    --(data->quat_mi2s_clk_count) == 0) {
++				sm8150_vote_quat_mi2s_clks(cpu_dai, 0);
++			}
++			if (data->lpass_macro_count > 0 &&
++			    --(data->lpass_macro_count) == 0)
++				clk_disable_unprepare(data->lpass_macro);
++		}
++		break;
+ 	case QUATERNARY_TDM_RX_0:
+ 	case QUATERNARY_TDM_TX_0:
+ 		if (--(data->quat_tdm_clk_count) == 0) {
+@@ -342,7 +430,6 @@ static void sm8150_snd_shutdown(struct snd_pcm_substream *substream)
+ 		}
+ 		break;
+ 	case SLIMBUS_0_RX...SLIMBUS_6_TX:
+-	case QUATERNARY_MI2S_RX:
+ 		break;
+ 	default:
+ 		pr_err("%s: invalid dai id 0x%x\n", __func__, cpu_dai->id);
+@@ -454,6 +541,13 @@ static int sm8150_platform_probe(struct platform_device *pdev)
+ 	data->card = card;
+ 	snd_soc_card_set_drvdata(card, data);
+ 
++	data->lpass_macro = devm_clk_get(dev, "lpass_macro");
++	if (IS_ERR(data->lpass_macro)) {
++		dev_info(dev, "lpass_macro clock not found (%ld)\n",
++			 PTR_ERR(data->lpass_macro));
++		data->lpass_macro = NULL;
++	}
++
+ 	sm8150_add_be_ops(card);
+ 	return devm_snd_soc_register_card(dev, card);
+ }

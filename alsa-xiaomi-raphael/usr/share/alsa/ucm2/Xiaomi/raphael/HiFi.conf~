@@ -14,7 +14,7 @@ SectionVerb {
 	EnableSequence [
 
 		# Speaker
-		cset "name='QUAT_MI2S_RX Audio Mixer MultiMedia1' 1"
+		cset "name='QUAT_TDM_RX_0 Audio Mixer MultiMedia1' 1"
 
 		# Headphones
 		cset "name='SLIM RX2 MUX' AIF4_PB"
@@ -44,7 +44,7 @@ SectionVerb {
 
 	DisableSequence [
 
-		cset "name='QUAT_MI2S_RX Audio Mixer MultiMedia1' 0"
+		cset "name='QUAT_TDM_RX_0 Audio Mixer MultiMedia1' 0"
 		cset "name='SLIMBUS_6_RX Audio Mixer MultiMedia2' 0"
 		cset "name='MultiMedia3 Mixer SLIMBUS_0_TX' 0"
 		cset "name='MultiMedia4 Mixer SLIMBUS_1_TX' 0"
