@@ -233,7 +233,7 @@ index 6149bc912..2bfb80cbe 100644
  			   MIDR_REVISION(midr), COMPAT_ELF_PLATFORM);
 -
 +	else
-+		seq_printf(m, "model name\t: Qualcomm SM8150 (XiaoMi K20 Pro)\n");
++		seq_printf(m, "model name\t: Qualcomm SM8150\n");
  	seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
  		   loops_per_jiffy / (500000UL/HZ),
  		   loops_per_jiffy / (5000UL/HZ) % 100);
@@ -294,11 +294,184 @@ index d4b007b38..bfa75813f 100755
  
  cat <<EOF > debian/rules.vars
  ARCH := ${ARCH}
+diff --git a/sound/soc/codecs/wcd-mbhc-v2.c b/sound/soc/codecs/wcd-mbhc-v2.c
+index bb0c8478a..080838a72 100644
+--- a/sound/soc/codecs/wcd-mbhc-v2.c
++++ b/sound/soc/codecs/wcd-mbhc-v2.c
+@@ -77,6 +77,7 @@ struct wcd_mbhc {
+ 	enum wcd_mbhc_hph_type hph_type;
+ 	/* Holds mbhc detection method - ADC/Legacy */
+ 	int mbhc_detection_logic;
++	bool detection_done;
+ };
+ 
+ static inline int wcd_mbhc_write_field(const struct wcd_mbhc *mbhc,
+@@ -305,6 +306,7 @@ static void wcd_mbhc_report_plug_removal(struct wcd_mbhc *mbhc,
+ 	wcd_micbias_disable(mbhc);
+ 	mbhc->hph_type = WCD_MBHC_HPH_NONE;
+ 	mbhc->zl = mbhc->zr = 0;
++	mbhc->detection_done = false;
+ 	snd_soc_jack_report(mbhc->jack, mbhc->hph_status, WCD_MBHC_JACK_MASK);
+ 	mbhc->current_plug = MBHC_PLUG_TYPE_NONE;
+ 	mbhc->force_linein = false;
+@@ -332,6 +334,9 @@ static void wcd_mbhc_report_plug_insertion(struct wcd_mbhc *mbhc,
+ 					   enum snd_jack_types jack_type)
+ {
+ 	bool is_pa_on;
++
++	mbhc->detection_done = false;
++
+ 	/*
+ 	 * Report removal of current jack type.
+ 	 * Headphone to headset shouldn't report headphone
+@@ -357,7 +362,6 @@ static void wcd_mbhc_report_plug_insertion(struct wcd_mbhc *mbhc,
+ 		break;
+ 	}
+ 
+-
+ 	is_pa_on = wcd_mbhc_read_field(mbhc, WCD_MBHC_HPH_PA_EN);
+ 
+ 	if (!is_pa_on) {
+@@ -400,6 +404,8 @@ static void wcd_mbhc_report_plug_insertion(struct wcd_mbhc *mbhc,
+ 
+ 	snd_soc_jack_report(mbhc->jack, (mbhc->hph_status | SND_JACK_MECHANICAL),
+ 			    WCD_MBHC_JACK_MASK);
++
++	mbhc->detection_done = true;
+ }
+ 
+ static void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
+@@ -823,6 +829,28 @@ static int wcd_mbhc_initialise(struct wcd_mbhc *mbhc)
+ 
+ 	wcd_program_btn_threshold(mbhc, false);
+ 
++	/*
++	 * If no headset is plugged in at boot, configure electrical
++	 * insertion detection for hotplug support. This follows the
++	 * same sequence as wcd_mbhc_elec_hs_report_unplug():
++	 *   - Set SCHMT_ISRC = 3 (Schmitt trigger current source)
++	 *   - Set ELECT_DETECTION_TYPE = 1 (insertion mode)
++	 *   - Enable Elect Insert IRQ
++	 * Without SCHMT_ISRC = 3, the electrical detection circuit
++	 * has no current source and cannot detect plug insertion.
++	 */
++	if (mbhc->current_plug == MBHC_PLUG_TYPE_NONE) {
++		disable_irq_nosync(mbhc->intr_ids->mbhc_hs_rem_intr);
++		wcd_mbhc_write_field(mbhc, WCD_MBHC_FSM_EN, 0);
++		wcd_mbhc_write_field(mbhc, WCD_MBHC_ELECT_SCHMT_ISRC, 3);
++		wcd_mbhc_write_field(mbhc, WCD_MBHC_ELECT_DETECTION_TYPE, 1);
++		enable_irq(mbhc->intr_ids->mbhc_hs_ins_intr);
++	} else {
++		dev_dbg(mbhc->component->dev,
++			"headset detected at boot (plug=%d)\n",
++			mbhc->current_plug);
++	}
++
+ 	mutex_unlock(&mbhc->lock);
+ 
+ 	pm_runtime_put_autosuspend(component->dev);
+@@ -1315,6 +1343,19 @@ static void wcd_correct_swch_plug(struct work_struct *work)
+ 		enable_irq(mbhc->intr_ids->mbhc_hs_ins_intr);
+ 	}
+ 
++	/*
++	 * If no device detected after full detection sequence, re-enable
++	 * the Elect Insert IRQ so future hotplug events can be detected.
++	 * This handles the case where a spurious boot-time IRQ triggered
++	 * detection that found nothing.
++	 */
++	if (mbhc->current_plug == MBHC_PLUG_TYPE_NONE) {
++		wcd_mbhc_write_field(mbhc, WCD_MBHC_FSM_EN, 0);
++		wcd_mbhc_write_field(mbhc, WCD_MBHC_ELECT_SCHMT_ISRC, 3);
++		wcd_mbhc_write_field(mbhc, WCD_MBHC_ELECT_DETECTION_TYPE, 1);
++		enable_irq(mbhc->intr_ids->mbhc_hs_ins_intr);
++	}
++
+ 	if (mbhc->mbhc_cb->hph_pull_down_ctrl)
+ 		mbhc->mbhc_cb->hph_pull_down_ctrl(component, true);
+ 
+@@ -1380,6 +1421,20 @@ static irqreturn_t wcd_mbhc_adc_hs_ins_irq(int irq, void *data)
+ 		return IRQ_HANDLED;
+ 	}
+ 
++	/*
++	 * Hotplug detection: when no headset is currently detected and
++	 * we receive an electrical insertion IRQ, start the full plug
++	 * type detection sequence (enable micbias, measure impedance,
++	 * determine plug type). This handles the case where the
++	 * mechanical switch doesn't trigger on insertion.
++	 */
++	if (mbhc->current_plug == MBHC_PLUG_TYPE_NONE) {
++		mutex_lock(&mbhc->lock);
++		wcd_mbhc_adc_detect_plug_type(mbhc);
++		mutex_unlock(&mbhc->lock);
++		return IRQ_HANDLED;
++	}
++
+ 	do {
+ 		clamp_state = wcd_mbhc_read_field(mbhc, WCD_MBHC_IN2P_CLAMP_STATE);
+ 		if (clamp_state)
+@@ -1418,6 +1473,14 @@ int wcd_mbhc_get_impedance(struct wcd_mbhc *mbhc, uint32_t *zl,	uint32_t *zr)
+ }
+ EXPORT_SYMBOL(wcd_mbhc_get_impedance);
+ 
++bool wcd_mbhc_is_detection_done(struct wcd_mbhc *mbhc)
++{
++	if (!mbhc)
++		return true;
++	return mbhc->detection_done;
++}
++EXPORT_SYMBOL(wcd_mbhc_is_detection_done);
++
+ void wcd_mbhc_set_hph_type(struct wcd_mbhc *mbhc, int hph_type)
+ {
+ 	mbhc->hph_type = hph_type;
+diff --git a/sound/soc/codecs/wcd-mbhc-v2.h b/sound/soc/codecs/wcd-mbhc-v2.h
+index a5d52b964..bad67eebf 100644
+--- a/sound/soc/codecs/wcd-mbhc-v2.h
++++ b/sound/soc/codecs/wcd-mbhc-v2.h
+@@ -283,6 +283,7 @@ struct wcd_mbhc *wcd_mbhc_init(struct snd_soc_component *component,
+ 		      bool impedance_det_en);
+ int wcd_mbhc_get_impedance(struct wcd_mbhc *mbhc, uint32_t *zl,
+ 			   uint32_t *zr);
++bool wcd_mbhc_is_detection_done(struct wcd_mbhc *mbhc);
+ void wcd_mbhc_deinit(struct wcd_mbhc *mbhc);
+ int wcd_mbhc_event_notify(struct wcd_mbhc *mbhc, unsigned long event);
+ 
+@@ -335,6 +336,12 @@ static inline int wcd_mbhc_get_impedance(struct wcd_mbhc *mbhc,
+ 	*zr = 0;
+ 	return -EINVAL;
+ }
++
++static inline bool wcd_mbhc_is_detection_done(struct wcd_mbhc *mbhc)
++{
++	return true;
++}
++
+ static inline void wcd_mbhc_deinit(struct wcd_mbhc *mbhc)
+ {
+ }
 diff --git a/sound/soc/codecs/wcd934x.c b/sound/soc/codecs/wcd934x.c
-index bc41a1466..78eb66306 100644
+index bc41a1466..bda18179b 100644
 --- a/sound/soc/codecs/wcd934x.c
 +++ b/sound/soc/codecs/wcd934x.c
-@@ -545,6 +545,7 @@ struct wcd934x_codec {
+@@ -55,6 +55,15 @@
+ #define WCD934X_SLIM_IRQ_UNDERFLOW	BIT(1)
+ #define WCD934X_SLIM_IRQ_PORT_CLOSED	BIT(2)
+ 
++#define SB_OF_UF_MAX_RETRY_CNT		5
++
++/* WCD934X slimbus slave port error status */
++enum {
++	SB_PORT_ERR_OF, /* SB port overflow */
++	SB_PORT_ERR_UF, /* SB port underflow */
++	SB_PORT_ERR_MAX,
++};
++
+ #define WCD934X_MCLK_CLK_12P288MHZ	12288000
+ #define WCD934X_MCLK_CLK_9P6MHZ		9600000
+ 
+@@ -545,6 +554,7 @@ struct wcd934x_codec {
  	int dmic_sample_rate;
  	int comp_enabled[COMPANDER_MAX];
  	int sysclk_users;
@@ -306,7 +479,16 @@ index bc41a1466..78eb66306 100644
  	struct mutex sysclk_mutex;
  	/* mbhc module */
  	struct wcd_mbhc *mbhc;
-@@ -1351,17 +1352,34 @@ static int __wcd934x_cdc_mclk_enable(struct wcd934x_codec *wcd, bool enable)
+@@ -554,6 +564,8 @@ struct wcd934x_codec {
+ 	struct mutex micb_lock;
+ 	u32 micb_ref[WCD934X_MAX_MICBIAS];
+ 	u32 pullup_ref[WCD934X_MAX_MICBIAS];
++	/* slimbus port overflow/underflow counts */
++	unsigned short slim_tx_of_uf_cnt[WCD934X_RX_MAX][SB_PORT_ERR_MAX];
+ };
+ 
+ #define to_wcd934x_codec(_hw) container_of(_hw, struct wcd934x_codec, hw)
+@@ -1351,17 +1363,34 @@ static int __wcd934x_cdc_mclk_enable(struct wcd934x_codec *wcd, bool enable)
  	int ret = 0;
  
  	if (enable) {
@@ -342,7 +524,7 @@ index bc41a1466..78eb66306 100644
  		regmap_read(wcd->regmap, WCD934X_CDC_CLK_RST_CTRL_SWR_CONTROL,
  			    &val);
  
-@@ -1700,6 +1718,20 @@ static int wcd934x_slim_set_hw_params(struct wcd934x_codec *wcd,
+@@ -1700,6 +1729,20 @@ static int wcd934x_slim_set_hw_params(struct wcd934x_codec *wcd,
  	u16 payload = 0;
  	int ret, i;
  
@@ -363,7 +545,72 @@ index bc41a1466..78eb66306 100644
  	cfg->ch_count = 0;
  	cfg->direction = direction;
  	cfg->port_mask = 0;
-@@ -1864,7 +1896,18 @@ static int wcd934x_hw_free(struct snd_pcm_substream *substream,
+@@ -1719,6 +1762,32 @@ static int wcd934x_slim_set_hw_params(struct wcd934x_codec *wcd,
+ 	list_for_each_entry(ch, slim_ch_list, list) {
+ 		cfg->chs[i++] = ch->ch_num;
+ 		if (direction == SNDRV_PCM_STREAM_PLAYBACK) {
++			/* Full port reset:
++			 * 1. Disable port
++			 * 2. Clear MULTI_CHNL register
++			 * 3. Clear any pending interrupt status
++			 * 4. Small delay for HW to settle
++			 * 5. Reconfigure MULTI_CHNL
++			 * 6. Re-enable port with water mark
++			 *
++			 * This is needed because once a SLIMbus RX port
++			 * gets into Port Closed error state (from a previous
++			 * overflow), simply writing PORT_CFG enable is not
++			 * enough to recover it. The MULTI_CHNL register
++			 * must also be cleared and re-set.
++			 */
++			regmap_write(wcd->if_regmap,
++				     WCD934X_SLIM_PGD_RX_PORT_CFG(ch->port),
++				     SLAVE_PORT_DISABLE);
++			regmap_write(wcd->if_regmap,
++				     WCD934X_SLIM_PGD_RX_PORT_MULTI_CHNL_0(ch->port),
++				     0);
++			/* Clear any pending interrupt on this port */
++			regmap_write(wcd->if_regmap,
++				     WCD934X_SLIM_PGD_PORT_INT_CLR_RX_0 +
++				     (ch->port / 8), BIT(ch->port % 8));
++			usleep_range(10000, 10100);
++
+ 			/* write to interface device */
+ 			ret = regmap_write(wcd->if_regmap,
+ 			   WCD934X_SLIM_PGD_RX_PORT_MULTI_CHNL_0(ch->port),
+@@ -1734,6 +1803,18 @@ static int wcd934x_slim_set_hw_params(struct wcd934x_codec *wcd,
+ 			if (ret < 0)
+ 				goto err;
+ 		} else {
++			/* Full port reset for TX port */
++			regmap_write(wcd->if_regmap,
++				     WCD934X_SLIM_PGD_TX_PORT_CFG(ch->port),
++				     SLAVE_PORT_DISABLE);
++			regmap_write(wcd->if_regmap,
++				WCD934X_SLIM_PGD_TX_PORT_MULTI_CHNL_0(ch->port),
++				0);
++			regmap_write(wcd->if_regmap,
++				WCD934X_SLIM_PGD_TX_PORT_MULTI_CHNL_1(ch->port),
++				0);
++			usleep_range(10000, 10100);
++
+ 			ret = regmap_write(wcd->if_regmap,
+ 				WCD934X_SLIM_PGD_TX_PORT_MULTI_CHNL_0(ch->port),
+ 				payload & 0x00FF);
+@@ -1759,6 +1840,12 @@ static int wcd934x_slim_set_hw_params(struct wcd934x_codec *wcd,
+ 
+ 	dai_data->sruntime = slim_stream_allocate(wcd->sdev, "WCD934x-SLIM");
+ 
++	/* Reset overflow/underflow counters for all configured ports */
++	list_for_each_entry(ch, slim_ch_list, list) {
++		wcd->slim_tx_of_uf_cnt[ch->port][SB_PORT_ERR_OF] = 0;
++		wcd->slim_tx_of_uf_cnt[ch->port][SB_PORT_ERR_UF] = 0;
++	}
++
+ 	return 0;
+ 
+ err:
+@@ -1864,7 +1951,18 @@ static int wcd934x_hw_free(struct snd_pcm_substream *substream,
  
  	dai_data = &wcd->dai[dai->id];
  
@@ -382,6 +629,150 @@ index bc41a1466..78eb66306 100644
  
  	return 0;
  }
+@@ -1885,6 +1983,30 @@ static int wcd934x_trigger(struct snd_pcm_substream *substream, int cmd,
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+ 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+ 		cfg = &dai_data->sconfig;
++		/*
++		 * Recovery for SLIM RX ports that may have been closed
++		 * by hardware due to overflow during prepare phase.
++		 */
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++			struct list_head *slim_ch_list = &dai_data->slim_ch_list;
++			struct wcd934x_slim_ch *ch;
++			u16 payload = 0;
++
++			list_for_each_entry(ch, slim_ch_list, list)
++				payload |= 1 << ch->shift;
++
++			list_for_each_entry(ch, slim_ch_list, list) {
++				regmap_write(wcd->if_regmap,
++					WCD934X_SLIM_PGD_RX_PORT_CFG(ch->port),
++					SLAVE_PORT_DISABLE);
++				regmap_write(wcd->if_regmap,
++					WCD934X_SLIM_PGD_RX_PORT_MULTI_CHNL_0(ch->port),
++					payload);
++				regmap_write(wcd->if_regmap,
++					WCD934X_SLIM_PGD_RX_PORT_CFG(ch->port),
++					WCD934X_SLIM_WATER_MARK_VAL);
++			}
++		}
+ 		slim_stream_prepare(dai_data->sruntime, cfg);
+ 		slim_stream_enable(dai_data->sruntime);
+ 		break;
+@@ -2261,35 +2383,69 @@ static irqreturn_t wcd934x_slim_irq_handler(int irq, void *data)
+ 
+ 		if (val & WCD934X_SLIM_IRQ_OVERFLOW)
+ 			dev_err_ratelimited(wcd->dev,
+-					    "overflow error on %s port %d, value %x\n",
++					    "overflow on %s port %d, value %x\n",
+ 					    (tx ? "TX" : "RX"), port_id, val);
+ 
+ 		if (val & WCD934X_SLIM_IRQ_UNDERFLOW)
+ 			dev_err_ratelimited(wcd->dev,
+-					    "underflow error on %s port %d, value %x\n",
++					    "underflow on %s port %d, value %x\n",
+ 					    (tx ? "TX" : "RX"), port_id, val);
+ 
++		/*
++		 * Count overflow/underflow per port, only disable
++		 * interrupt after exceeding max retry count. This
++		 * matches Android kernel behavior and allows the
++		 * port to recover when the condition clears (e.g.
++		 * after DAPM powerup completes).
++		 */
++		if (val & WCD934X_SLIM_IRQ_OVERFLOW) {
++			wcd->slim_tx_of_uf_cnt[port_id][SB_PORT_ERR_OF]++;
++			dev_err_ratelimited(wcd->dev,
++				"%s port(%d) overflow cnt: %d\n",
++				(tx ? "TX" : "RX"), port_id,
++				wcd->slim_tx_of_uf_cnt[port_id][SB_PORT_ERR_OF]);
++		}
++		if (val & WCD934X_SLIM_IRQ_UNDERFLOW) {
++			wcd->slim_tx_of_uf_cnt[port_id][SB_PORT_ERR_UF]++;
++			dev_err_ratelimited(wcd->dev,
++				"%s port(%d) underflow cnt: %d\n",
++				(tx ? "TX" : "RX"), port_id,
++				wcd->slim_tx_of_uf_cnt[port_id][SB_PORT_ERR_UF]);
++		}
++
+ 		if ((val & WCD934X_SLIM_IRQ_OVERFLOW) ||
+ 		    (val & WCD934X_SLIM_IRQ_UNDERFLOW)) {
+-			if (!tx)
+-				reg = WCD934X_SLIM_PGD_PORT_INT_EN0 +
+-					(port_id / 8);
+-			else
++			if (!tx) {
++				if ((wcd->slim_tx_of_uf_cnt[port_id]
++				     [SB_PORT_ERR_OF] > SB_OF_UF_MAX_RETRY_CNT) ||
++				    (wcd->slim_tx_of_uf_cnt[port_id]
++				     [SB_PORT_ERR_UF] > SB_OF_UF_MAX_RETRY_CNT))
++					reg = WCD934X_SLIM_PGD_PORT_INT_EN0 +
++						(port_id / 8);
++				else
++					goto skip_port_disable;
++			} else if ((wcd->slim_tx_of_uf_cnt[port_id]
++				    [SB_PORT_ERR_OF] > SB_OF_UF_MAX_RETRY_CNT) ||
++				   (wcd->slim_tx_of_uf_cnt[port_id]
++				    [SB_PORT_ERR_UF] > SB_OF_UF_MAX_RETRY_CNT)) {
+ 				reg = WCD934X_SLIM_PGD_PORT_INT_TX_EN0 +
+ 					(port_id / 8);
+-			regmap_read(
+-				wcd->if_regmap, reg, &int_val);
+-			if (int_val & (1 << (port_id % 8))) {
+-				int_val = int_val ^ (1 << (port_id % 8));
+-				regmap_write(wcd->if_regmap,
+-					     reg, int_val);
++			} else {
++				goto skip_port_disable;
++			}
++			if (reg) {
++				regmap_read(wcd->if_regmap, reg, &int_val);
++				if (int_val & (1 << (port_id % 8))) {
++					int_val = int_val ^ (1 << (port_id % 8));
++					regmap_write(wcd->if_regmap, reg, int_val);
++				}
+ 			}
+ 		}
+-
++skip_port_disable:
+ 		if (val & WCD934X_SLIM_IRQ_PORT_CLOSED)
+ 			dev_err_ratelimited(wcd->dev,
+-					    "Port Closed %s port %d, value %x\n",
+-					    (tx ? "TX" : "RX"), port_id, val);
++					    "Port Closed %s port %d\n",
++					    (tx ? "TX" : "RX"), port_id);
+ 
+ 		regmap_write(wcd->if_regmap,
+ 			     WCD934X_SLIM_PGD_PORT_INT_CLR_RX_0 + (j / 8),
+@@ -2967,6 +3123,9 @@ static int wcd934x_mbhc_init(struct snd_soc_component *component)
+ 	intr_ids->hph_right_ocp = regmap_irq_get_virq(data->irq_data,
+ 						      WCD934X_IRQ_HPH_PA_OCPR_FAULT);
+ 
++	/* Update micbias voltage after device tree parsing */
++	wcd->mbhc_cfg.micb_mv = wcd->common.micb_mv[1];
++
+ 	wcd->mbhc = wcd_mbhc_init(component, &mbhc_cb, intr_ids, wcd_mbhc_fields, true);
+ 	if (IS_ERR(wcd->mbhc)) {
+ 		wcd->mbhc = NULL;
+@@ -4117,6 +4276,17 @@ static int wcd934x_codec_enable_slim(struct snd_soc_dapm_widget *w,
+ 
+ 	switch (event) {
+ 	case SND_SOC_DAPM_POST_PMU:
++		/*
++		 * Wait for MBHC plug detection to complete before
++		 * enabling the audio path. MBHC and DAPM both access
++		 * shared HPH registers and concurrent access can
++		 * corrupt hardware state permanently.
++		 */
++		if (wcd->mbhc) {
++			int retries = 50;
++			while (!wcd_mbhc_is_detection_done(wcd->mbhc) && retries--)
++				msleep(100);
++		}
+ 		wcd934x_codec_enable_int_port(dai, comp);
+ 		break;
+ 	}
 diff --git a/sound/soc/qcom/Kconfig b/sound/soc/qcom/Kconfig
 index 41dbbdaa0..3d1f33bb0 100644
 --- a/sound/soc/qcom/Kconfig
@@ -427,7 +818,7 @@ index 712e4aa01..e1ea0a4d0 100644
  obj-$(CONFIG_SND_SOC_QCOM_COMMON) += snd-soc-qcom-common.o
  obj-$(CONFIG_SND_SOC_QCOM_SDW) += snd-soc-qcom-sdw.o
 diff --git a/sound/soc/qcom/qdsp6/q6afe-dai.c b/sound/soc/qcom/qdsp6/q6afe-dai.c
-index 0f47aadaa..73e558617 100644
+index 0f47aadaa..8d2d76865 100644
 --- a/sound/soc/qcom/qdsp6/q6afe-dai.c
 +++ b/sound/soc/qcom/qdsp6/q6afe-dai.c
 @@ -41,6 +41,7 @@ static int q6slim_hw_params(struct snd_pcm_substream *substream,
@@ -447,7 +838,7 @@ index 0f47aadaa..73e558617 100644
 +	 */
 +	if (slim->num_channels == 0 && channels > 0) {
 +		slim->num_channels = channels;
-+		dev_info(dai->dev, "q6slim_hw_params: setting num_channels=%d from hw_params\n", channels);
++		dev_dbg(dai->dev, "q6slim_hw_params: setting num_channels=%d from hw_params\n", channels);
 +	}
 +
  	return 0;
@@ -457,7 +848,7 @@ index 0f47aadaa..73e558617 100644
  	struct q6afe_dai_data *dai_data = dev_get_drvdata(dai->dev);
  	int rc;
  
-+	dev_info(dai->dev, "q6afe_dai_prepare: dai_id=0x%x stream=%d\n", dai->id, substream->stream);
++	dev_dbg(dai->dev, "q6afe_dai_prepare: dai_id=0x%x stream=%d\n", dai->id, substream->stream);
 +
  	if (dai_data->is_port_started[dai->id]) {
  		/* stop the port and restart with new port config */
@@ -466,7 +857,7 @@ index 0f47aadaa..73e558617 100644
  					&dai_data->port_config[dai->id].hdmi);
  		break;
  	case SLIMBUS_0_RX ... SLIMBUS_6_TX:
-+		dev_info(dai->dev, "SLIM prepare: num_channels=%d ch_map[0]=%d ch_map[1]=%d\n",
++		dev_dbg(dai->dev, "SLIM prepare: num_channels=%d ch_map[0]=%d ch_map[1]=%d\n",
 +			 dai_data->port_config[dai->id].slim.num_channels,
 +			 dai_data->port_config[dai->id].slim.ch_mapping[0],
 +			 dai_data->port_config[dai->id].slim.ch_mapping[1]);
@@ -477,7 +868,7 @@ index 0f47aadaa..73e558617 100644
  	struct q6afe_port_config *pcfg = &dai_data->port_config[dai->id];
  	int i;
  
-+	dev_info(dai->dev, "q6slim_set_channel_map: dai_id=0x%x tx_num=%u rx_num=%u caller=%pS\n",
++	dev_dbg(dai->dev, "q6slim_set_channel_map: dai_id=0x%x tx_num=%u rx_num=%u caller=%pS\n",
 +		 dai->id, tx_num, rx_num, __builtin_return_address(0));
 +
  	if (dai->id & 0x1) {
@@ -488,10 +879,10 @@ index 0f47aadaa..73e558617 100644
  		pcfg->slim.num_channels = tx_num;
  
 -
-+		dev_info(dai->dev, "TX channels: %u [", tx_num);
++		dev_dbg(dai->dev, "TX channels: %u [", tx_num);
 +		for (i = 0; i < tx_num; i++)
-+			printk("%u ", tx_slot[i]);
-+		printk("]\n");
++			dev_dbg(dai->dev, "%u ", tx_slot[i]);
++		dev_dbg(dai->dev, "]\n");
  	} else {
  		if (!rx_slot) {
  			pr_err("%s: rx slot not found\n", __func__);
@@ -499,15 +890,15 @@ index 0f47aadaa..73e558617 100644
  
  		pcfg->slim.num_channels = rx_num;
  
-+		dev_info(dai->dev, "RX channels: %u [", rx_num);
++		dev_dbg(dai->dev, "RX channels: %u [", rx_num);
 +		for (i = 0; i < rx_num; i++)
-+			printk("%u ", rx_slot[i]);
-+		printk("]\n");
++			dev_dbg(dai->dev, "%u ", rx_slot[i]);
++		dev_dbg(dai->dev, "]\n");
  	}
  
  	return 0;
 diff --git a/sound/soc/qcom/qdsp6/q6afe.c b/sound/soc/qcom/qdsp6/q6afe.c
-index 43d877322..5eaab1fb1 100644
+index 43d877322..16227da3b 100644
 --- a/sound/soc/qcom/qdsp6/q6afe.c
 +++ b/sound/soc/qcom/qdsp6/q6afe.c
 @@ -35,6 +35,8 @@
@@ -558,7 +949,7 @@ index 43d877322..5eaab1fb1 100644
 +		.rx_slave_port_offset = 16,
 +	};
 +
-+	dev_info(dev, "CDC SLIMBUS slave cfg: eaddr=0x%016llx lsw=0x%08x msw=0x%08x\n",
++	dev_dbg(dev, "CDC SLIMBUS slave cfg: eaddr=0x%016llx lsw=0x%08x msw=0x%08x\n",
 +		 eaddr, cfg.device_enum_addr_lsw, cfg.device_enum_addr_msw);
 +	/* param_hdr_v3 as expected by ADSP firmware (Android layout) */
 +	struct __packed param_hdr_v3 {
@@ -626,12 +1017,12 @@ index 43d877322..5eaab1fb1 100644
  	union afe_port_config *pcfg = &port->port_cfg;
 +	int i;
 +
-+	dev_info(port->afe->dev, "q6afe_slim_port_prepare: port_id=0x%x rate=%u bw=%u ch=%u\n",
++	dev_dbg(port->afe->dev, "q6afe_slim_port_prepare: port_id=0x%x rate=%u bw=%u ch=%u\n",
 +		 port->id, cfg->sample_rate, cfg->bit_width, cfg->num_channels);
-+	dev_info(port->afe->dev, "ch_mapping: [");
++	dev_dbg(port->afe->dev, "ch_mapping: [");
 +	for (i = 0; i < cfg->num_channels; i++)
-+		printk("%u ", cfg->ch_mapping[i]);
-+	printk("]\n");
++		dev_dbg(port->afe->dev, "%u ", cfg->ch_mapping[i]);
++	dev_dbg(port->afe->dev, "]\n");
  
  	pcfg->slim_cfg.sb_cfg_minor_version = AFE_API_VERSION_SLIMBUS_CONFIG;
  	pcfg->slim_cfg.sample_rate = cfg->sample_rate;
@@ -647,3 +1038,516 @@ index a29abe4ce..e07bb1842 100644
  int q6afe_vote_lpass_core_hw(struct device *dev, uint32_t hw_block_id,
  			     const char *client_name, uint32_t *client_handle);
  int q6afe_unvote_lpass_core_hw(struct device *dev, uint32_t hw_block_id,
+diff --git a/sound/soc/qcom/sm8150-raphael.c b/sound/soc/qcom/sm8150-raphael.c
+new file mode 100644
+index 000000000..272869504
+--- /dev/null
++++ b/sound/soc/qcom/sm8150-raphael.c
+@@ -0,0 +1,507 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * sm8150_new.c - SM8150 ASoC machine driver (Xiaomi Raphael)
++ *
++ * Ported from Android techpack/audio/asoc/sm8150.c to upstream Linux APIs.
++ * Supports:
++ *   - WCD9340/WCD934x (tavil) codec on SLIMBUS for headset audio
++ *   - TFA9874 speaker amp on Quaternary MI2S
++ *
++ * Copyright (c) 2022, The Linux Foundation. All rights reserved.
++ */
++
++#include <dt-bindings/sound/qcom,q6afe.h>
++#include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/of_device.h>
++#include <linux/soundwire/sdw.h>
++#include <linux/slimbus.h>
++#include <sound/core.h>
++#include <sound/soc.h>
++#include <sound/soc-dapm.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/jack.h>
++#include <uapi/linux/input-event-codes.h>
++#include "common.h"
++#include "qdsp6/q6afe.h"
++
++#define DRIVER_NAME		"sm8150_raphael"
++
++#define SLIM_MAX_TX_PORTS	16
++#define SLIM_MAX_RX_PORTS	13
++#define WCD934X_DEFAULT_MCLK_RATE	9600000
++#define MI2S_BCLK_RATE		1536000
++
++struct sm8150_snd_data {
++	struct snd_soc_jack jack;
++	bool jack_setup;
++	bool slim_port_setup;
++	bool stream_prepared[AFE_PORT_MAX];
++	struct snd_soc_card *card;
++	uint32_t quat_mi2s_clk_count;
++	struct sdw_stream_runtime *sruntime[AFE_PORT_MAX];
++};
++
++/* ==================== BE hw_params fixup ==================== */
++
++/*
++ * Default fixup: 48kHz / 2ch / S24_LE
++ * Used for most backend links (SLIMBUS, AFE, USB, etc.)
++ */
++static int sm8150_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
++				     struct snd_pcm_hw_params *params)
++{
++	struct snd_interval *rate = hw_param_interval(params,
++					SNDRV_PCM_HW_PARAM_RATE);
++	struct snd_interval *channels = hw_param_interval(params,
++					SNDRV_PCM_HW_PARAM_CHANNELS);
++	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++
++	rate->min = rate->max = 48000;
++	channels->min = channels->max = 2;
++	snd_mask_none(fmt);
++	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S24_LE);
++
++	/* Set SLIM channel map on the CPU DAI so q6afe_slim_port_prepare
++	 * gets correct num_channels and ch_mapping
++	 */
++	if (cpu_dai->id >= SLIMBUS_0_RX && cpu_dai->id <= SLIMBUS_6_TX) {
++		const unsigned int slim_rx_ch[2] = {144, 145};
++		const unsigned int slim_tx_ch[2] = {128, 129};
++		snd_soc_dai_set_channel_map(cpu_dai, 2, slim_tx_ch,
++					    2, slim_rx_ch);
++
++		/* Send CDC SLIMBUS slave config - needed by Raphael FW */
++		{
++			u64 eaddr = 0;
++			struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++			if (codec_dai->component->dev->parent) {
++				struct slim_device *slim = to_slim_device(codec_dai->component->dev->parent);
++				memcpy(&eaddr, &slim->e_addr, sizeof(slim->e_addr));
++			}
++			q6afe_send_cdc_slimbus_slave_cfg(cpu_dai->dev, eaddr);
++		}
++	}
++
++	return 0;
++}
++
++/*
++ * MI2S fixup for TFA9874: 48kHz / 1ch / S16_LE
++ * TFA9874 only supports S16_LE format.
++ */
++static int sm8150_mi2s_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
++					  struct snd_pcm_hw_params *params)
++{
++	struct snd_interval *rate = hw_param_interval(params,
++					SNDRV_PCM_HW_PARAM_RATE);
++	struct snd_interval *channels = hw_param_interval(params,
++					SNDRV_PCM_HW_PARAM_CHANNELS);
++	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
++
++	rate->min = rate->max = 48000;
++	channels->min = channels->max = 1;
++	snd_mask_none(fmt);
++	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
++
++	return 0;
++}
++
++/* ==================== SLIMBus hw_params ==================== */
++
++static int sm8150_slim_snd_hw_params(struct snd_pcm_substream *substream,
++				     struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct snd_soc_dai *codec_dai;
++	struct sm8150_snd_data *pdata = snd_soc_card_get_drvdata(rtd->card);
++	u32 rx_ch[SLIM_MAX_RX_PORTS], tx_ch[SLIM_MAX_TX_PORTS];
++	struct sdw_stream_runtime *sruntime;
++	u32 rx_ch_cnt = 0, tx_ch_cnt = 0;
++	int ret = 0, i;
++
++	for_each_rtd_codec_dais(rtd, i, codec_dai) {
++		sruntime = snd_soc_dai_get_stream(codec_dai,
++						  substream->stream);
++		if (sruntime != ERR_PTR(-ENOTSUPP))
++			pdata->sruntime[cpu_dai->id] = sruntime;
++
++		ret = snd_soc_dai_get_channel_map(codec_dai,
++				&tx_ch_cnt, tx_ch, &rx_ch_cnt, rx_ch);
++
++		/* If get_channel_map returns error or 0 channels (e.g. after
++		 * headphone unplug cleared the MUX), fall back to defaults.
++		 */
++		if (ret != 0 && ret != -ENOTSUPP) {
++			pr_err("failed to get codec chan map, err:%d\n", ret);
++			return ret;
++		} else if (ret == -ENOTSUPP) {
++			continue;
++		}
++
++		/* Fallback: 0 channels means MUX was cleared by unplug */
++		if (rx_ch_cnt == 0 &&
++		    substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++			rx_ch_cnt = 2;
++			rx_ch[0] = 144; rx_ch[1] = 145;
++		}
++		if (tx_ch_cnt == 0 &&
++		    substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
++			tx_ch_cnt = 2;
++			tx_ch[0] = 128; tx_ch[1] = 129;
++		}
++
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++			ret = snd_soc_dai_set_channel_map(cpu_dai, 0, NULL,
++							  rx_ch_cnt, rx_ch);
++		else
++			ret = snd_soc_dai_set_channel_map(cpu_dai, tx_ch_cnt,
++							  tx_ch, 0, NULL);
++	}
++
++	return 0;
++}
++
++/* ==================== hw_params dispatcher ==================== */
++
++static int sm8150_snd_hw_params(struct snd_pcm_substream *substream,
++					struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	int ret = 0;
++
++	switch (cpu_dai->id) {
++	case SLIMBUS_0_RX ... SLIMBUS_6_TX:
++		ret = sm8150_slim_snd_hw_params(substream, params);
++		break;
++	default:
++		break;
++	}
++	return ret;
++}
++
++/* ==================== DAI init (jack setup, SLIMBUS channel map) ==================== */
++
++static int sm8150_dai_init(struct snd_soc_pcm_runtime *rtd)
++{
++	struct snd_soc_card *card = rtd->card;
++	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct sm8150_snd_data *pdata = snd_soc_card_get_drvdata(card);
++	struct snd_soc_dai_link *link = rtd->dai_link;
++	struct snd_jack *jack;
++	unsigned int rx_ch[SLIM_MAX_RX_PORTS] = {144, 145, 146, 147, 148, 149,
++					150, 151, 152, 153, 154, 155, 156};
++	unsigned int tx_ch[SLIM_MAX_TX_PORTS] = {128, 129, 130, 131, 132, 133,
++					    134, 135, 136, 137, 138, 139,
++					    140, 141, 142, 143};
++	int rval, i;
++
++	dev_dbg(card->dev, "dai_init: link=%s no_pcm=%d cpu_id=0x%x\n",
++		 link->name, link->no_pcm, cpu_dai->id);
++
++	/* Set up headset jack detection */
++	if (!pdata->jack_setup) {
++		rval = snd_soc_card_jack_new(card, "Headset Jack",
++				SND_JACK_HEADSET |
++				SND_JACK_HEADPHONE |
++				SND_JACK_BTN_0 | SND_JACK_BTN_1 |
++				SND_JACK_BTN_2 | SND_JACK_BTN_3,
++				&pdata->jack);
++
++		if (rval < 0) {
++			dev_err(card->dev, "Unable to add Headphone Jack\n");
++			return rval;
++		}
++
++		jack = pdata->jack.jack;
++
++		snd_jack_set_key(jack, SND_JACK_BTN_0, KEY_PLAYPAUSE);
++		snd_jack_set_key(jack, SND_JACK_BTN_1, KEY_VOICECOMMAND);
++		snd_jack_set_key(jack, SND_JACK_BTN_2, KEY_VOLUMEUP);
++		snd_jack_set_key(jack, SND_JACK_BTN_3, KEY_VOLUMEDOWN);
++		pdata->jack_setup = true;
++	}
++
++	switch (cpu_dai->id) {
++	case SLIMBUS_0_RX ... SLIMBUS_6_TX:
++		/* setup SLIM channel map once */
++		if (pdata->slim_port_setup)
++			return 0;
++
++		/* Send CDC SLIMBUS slave config to DSP (required by Raphael FW) */
++		for_each_rtd_codec_dais(rtd, i, codec_dai) {
++			u64 eaddr = 0;
++			/* codec component dev's parent is the SLIMbus device */
++			struct device *parent = codec_dai->component->dev->parent;
++			if (parent) {
++				struct slim_device *slim = to_slim_device(parent);
++				memcpy(&eaddr, &slim->e_addr, sizeof(slim->e_addr));
++			}
++			q6afe_send_cdc_slimbus_slave_cfg(cpu_dai->dev, eaddr);
++		}
++
++		for_each_rtd_codec_dais(rtd, i, codec_dai) {
++			rval = snd_soc_dai_set_channel_map(codec_dai,
++							  ARRAY_SIZE(tx_ch),
++							  tx_ch,
++							  ARRAY_SIZE(rx_ch),
++							  rx_ch);
++			if (rval != 0 && rval != -ENOTSUPP)
++				return rval;
++
++			snd_soc_dai_set_sysclk(codec_dai, 0,
++					       WCD934X_DEFAULT_MCLK_RATE,
++					       SNDRV_PCM_STREAM_PLAYBACK);
++
++			rval = snd_soc_component_set_jack(codec_dai->component,
++							  &pdata->jack, NULL);
++			if (rval != 0 && rval != -ENOTSUPP) {
++				dev_warn(card->dev, "Failed to set jack: %d\n", rval);
++				return rval;
++			}
++		}
++
++		/* Also set channel map on the CPU DAI so q6afe_slim_port_prepare
++		 * gets correct num_channels and ch_mapping
++		 * Use 2 channels (stereo) for SLIMBUS playback
++		 */
++		{
++			unsigned int slim_rx_ch[2] = {144, 145};
++			unsigned int slim_tx_ch[2] = {128, 129};
++			int ret;
++
++			dev_dbg(card->dev, "Setting CPU DAI channel map: tx=2 rx=2\n");
++			ret = snd_soc_dai_set_channel_map(cpu_dai,
++						    2, slim_tx_ch,
++						    2, slim_rx_ch);
++			dev_dbg(card->dev, "snd_soc_dai_set_channel_map returned: %d\n", ret);
++		}
++
++		pdata->slim_port_setup = true;
++		break;
++	default:
++		break;
++	}
++
++	return 0;
++}
++
++/* ==================== Codec mixer setup (late_probe) ==================== */
++
++static int sm8150_late_probe(struct snd_soc_card *card)
++{
++	dev_dbg(card->dev, "late_probe: card registered, run amixer to configure routing\n");
++	return 0;
++}
++
++/* ==================== Startup (MI2S clock) ==================== */
++
++static int sm8150_snd_startup(struct snd_pcm_substream *substream)
++{
++	unsigned int fmt = SND_SOC_DAIFMT_BP_FP;
++	unsigned int codec_dai_fmt = SND_SOC_DAIFMT_BC_FC;
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++
++	switch (cpu_dai->id) {
++	case QUATERNARY_MI2S_RX:
++		/*
++		 * Set MI2S format:
++		 * BP_FP (CPU is consumer, codec provides clocks)
++		 * BC_FC (codec is consumer = slave)
++		 * NB_NF + I2S
++		 */
++		codec_dai_fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S;
++		snd_soc_dai_set_sysclk(cpu_dai,
++			Q6AFE_LPASS_CLK_ID_QUAD_MI2S_IBIT,
++			MI2S_BCLK_RATE, SNDRV_PCM_STREAM_PLAYBACK);
++		snd_soc_dai_set_fmt(cpu_dai, fmt);
++		snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
++		break;
++	case SLIMBUS_0_RX ... SLIMBUS_6_TX:
++		break;
++	default:
++		pr_err("%s: invalid dai id 0x%x\n", __func__, cpu_dai->id);
++		break;
++	}
++	return 0;
++}
++
++static void sm8150_snd_shutdown(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct sm8150_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++
++	switch (cpu_dai->id) {
++	case SLIMBUS_0_RX ... SLIMBUS_6_TX:
++		/* Don't clear slim_port_setup on shutdown - the channel
++		 * map only needs to be set once after boot. Re-clearing it
++		 * causes unnecessary re-initialization and can lead to
++		 * audio instability (extclk/MCLK being toggled).
++		 */
++		break;
++	case QUATERNARY_MI2S_RX:
++		break;
++	default:
++		pr_err("%s: invalid dai id 0x%x\n", __func__, cpu_dai->id);
++		break;
++	}
++}
++
++/* ==================== SoundWire prepare/free ==================== */
++
++static int sm8150_snd_prepare(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct sm8150_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct sdw_stream_runtime *sruntime = data->sruntime[cpu_dai->id];
++	int ret;
++
++	if (!sruntime)
++		return 0;
++
++	if (data->stream_prepared[cpu_dai->id]) {
++		sdw_disable_stream(sruntime);
++		sdw_deprepare_stream(sruntime);
++		data->stream_prepared[cpu_dai->id] = false;
++	}
++
++	ret = sdw_prepare_stream(sruntime);
++	if (ret)
++		return ret;
++
++	ret = sdw_enable_stream(sruntime);
++	if (ret) {
++		sdw_deprepare_stream(sruntime);
++		return ret;
++	}
++	data->stream_prepared[cpu_dai->id] = true;
++
++	return ret;
++}
++
++static int sm8150_snd_hw_free(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct sm8150_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct sdw_stream_runtime *sruntime = data->sruntime[cpu_dai->id];
++
++	if (sruntime && data->stream_prepared[cpu_dai->id]) {
++		sdw_disable_stream(sruntime);
++		sdw_deprepare_stream(sruntime);
++		data->stream_prepared[cpu_dai->id] = false;
++	}
++
++	return 0;
++}
++
++/* ==================== BE ops ==================== */
++
++static const struct snd_soc_ops sm8150_be_ops = {
++	.hw_params = sm8150_snd_hw_params,
++	.hw_free = sm8150_snd_hw_free,
++	.prepare = sm8150_snd_prepare,
++	.startup = sm8150_snd_startup,
++	.shutdown = sm8150_snd_shutdown,
++};
++
++/* ==================== Card setup ==================== */
++
++static void sm8150_add_be_ops(struct snd_soc_card *card)
++{
++	struct snd_soc_dai_link *link;
++	int i;
++
++	for_each_card_prelinks(card, i, link) {
++		if (link->no_pcm == 1) {
++			/*
++			 * Assign MI2S-specific fixup for Quaternary MI2S.
++			 * TFA9874 requires S16_LE / 1ch / 48kHz.
++			 */
++			if (link->id == QUATERNARY_MI2S_RX)
++				link->be_hw_params_fixup = sm8150_mi2s_be_hw_params_fixup;
++			else
++				link->be_hw_params_fixup = sm8150_be_hw_params_fixup;
++			link->ops = &sm8150_be_ops;
++		}
++		link->init = sm8150_dai_init;
++	}
++}
++
++/* ==================== Platform probe ==================== */
++
++static int sm8150_platform_probe(struct platform_device *pdev)
++{
++	struct snd_soc_card *card;
++	struct sm8150_snd_data *data;
++	struct device *dev = &pdev->dev;
++	int ret;
++
++	card = devm_kzalloc(dev, sizeof(*card), GFP_KERNEL);
++	if (!card)
++		return -ENOMEM;
++
++	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
++	if (!data)
++		return -ENOMEM;
++
++	card->driver_name = DRIVER_NAME;
++	card->dev = dev;
++	card->owner = THIS_MODULE;
++	card->late_probe = sm8150_late_probe;
++	dev_set_drvdata(dev, card);
++
++	dev_dbg(dev, "sm8150-raphael probe start\n");
++
++	/*
++	 * Parse DAI links from device tree.
++	 * The DT sound node should use compatible "qcom,sm8150-sndcard"
++	 * with child nodes for each DAI link (cpu/codec/platform).
++	 */
++	ret = qcom_snd_parse_of(card);
++	if (ret) {
++		dev_err(dev, "qcom_snd_parse_of failed: %d\n", ret);
++		return ret;
++	}
++	dev_dbg(dev, "qcom_snd_parse_of OK: %d links\n", card->num_links);
++
++	data->card = card;
++	snd_soc_card_set_drvdata(card, data);
++
++	sm8150_add_be_ops(card);
++
++	dev_dbg(dev, "registering sound card\n");
++	return devm_snd_soc_register_card(dev, card);
++}
++
++/* ==================== Driver registration ==================== */
++
++static const struct of_device_id snd_sm8150_dt_match[] = {
++	{.compatible = "qcom,sm8150-sndcard"},
++	{}
++};
++
++MODULE_DEVICE_TABLE(of, snd_sm8150_dt_match);
++
++static struct platform_driver snd_sm8150_driver = {
++	.probe  = sm8150_platform_probe,
++	.driver = {
++		.name = "snd-sm8150-raphael",
++		.of_match_table = snd_sm8150_dt_match,
++	},
++};
++module_platform_driver(snd_sm8150_driver);
++
++MODULE_AUTHOR("map220v <map220v300@gmail.com>");
++MODULE_DESCRIPTION("SM8150 ASoC Machine Driver (Xiaomi Raphael)");
++MODULE_LICENSE("GPL v2");
