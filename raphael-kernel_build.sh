@@ -18,7 +18,7 @@ if [ -z "$1" ]; then
 fi
 
 BRANCH="raphael-$1"
-REPO_URL="https://github.com/GengWei1997/linux.git"
+REPO_URL="https://github.com/GavinLiuOnline/xiaomi_raphael_kernel.git"
 TARGET_DIR="linux"
 
 if [ -d "$TARGET_DIR" ]; then
