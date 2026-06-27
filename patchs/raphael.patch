@@ -36,20 +36,22 @@ index e51e2f1b4..95b07704e 100644
  	};
  
          gpio-keys {
-@@ -180,16 +178,6 @@ cdsp_sec_mem: memory@a4c00000 {
+@@ -180,16 +178,16 @@ cdsp_sec_mem: memory@a4c00000 {
  			no-map;
  		};
  		
--		ramoops@a1600000 {
--			compatible = "ramoops";
--			reg = <0x0 0xa1600000 0x0 0x800000>;
--			console-size = <0x400000>;
--			ecc-size = <0>;
+ 		ramoops@a1600000 {
+ 			compatible = "ramoops";
+ 			reg = <0x0 0xa1600000 0x0 0x800000>;
+ 			console-size = <0x400000>;
+ 			ecc-size = <0>;
 -			ftrace-size = <0>;
--			pmsg-size = <0x200000>;
++			ftrace-size = <0x20000>;
+ 			pmsg-size = <0x200000>;
 -			record-size = <0>;
--			no-map;
--		};
++			record-size = <0x20000>;
+ 			no-map;
+ 		};
  
  		rmtfs_mem: memory@fe101000 {
  			compatible = "qcom,rmtfs-mem";
