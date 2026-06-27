@@ -96,10 +96,10 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            linux-image-xiaomi-raphael.deb
-            linux-headers-xiaomi-raphael.deb
-            firmware-xiaomi-raphael.deb
-            alsa-xiaomi-raphael.deb
+            output/linux-image-xiaomi-raphael.deb
+            output/linux-headers-xiaomi-raphael.deb
+            output/firmware-xiaomi-raphael.deb
+            output/alsa-xiaomi-raphael.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
