@@ -1,5 +1,5 @@
 diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
-index e51e2f1b4..95b07704e 100644
+index e51e2f1b4..83b209361 100644
 --- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
 @@ -10,8 +10,10 @@
@@ -36,12 +36,7 @@ index e51e2f1b4..95b07704e 100644
  	};
  
          gpio-keys {
-@@ -180,16 +178,16 @@ cdsp_sec_mem: memory@a4c00000 {
- 			no-map;
- 		};
- 		
- 		ramoops@a1600000 {
- 			compatible = "ramoops";
+@@ -185,9 +183,9 @@ ramoops@a1600000 {
  			reg = <0x0 0xa1600000 0x0 0x800000>;
  			console-size = <0x400000>;
  			ecc-size = <0>;
@@ -53,9 +48,7 @@ index e51e2f1b4..95b07704e 100644
  			no-map;
  		};
  
- 		rmtfs_mem: memory@fe101000 {
- 			compatible = "qcom,rmtfs-mem";
-@@ -576,7 +564,7 @@ &gpu {
+@@ -576,7 +574,7 @@ &gpu {
  };
  
  &gpu_zap_shader {
@@ -64,7 +57,7 @@ index e51e2f1b4..95b07704e 100644
  };
  
  &i2c19 {
-@@ -594,11 +582,23 @@ goodix@5d {
+@@ -594,11 +592,23 @@ goodix@5d {
  	};
  };
  
@@ -89,7 +82,7 @@ index e51e2f1b4..95b07704e 100644
  };
  
  &mdss_dsi0 {
-@@ -640,6 +640,7 @@ &mdss_dsi0_phy {
+@@ -640,6 +650,7 @@ &mdss_dsi0_phy {
  
  &mdss {
  	status = "okay";
@@ -97,7 +90,7 @@ index e51e2f1b4..95b07704e 100644
  };
  
  &pm8150_gpios {
-@@ -783,6 +784,10 @@ &pon_resin {
+@@ -783,6 +794,10 @@ &pon_resin {
  	linux,code = <KEY_VOLUMEDOWN>;
  };
  
@@ -108,7 +101,7 @@ index e51e2f1b4..95b07704e 100644
  &qupv3_id_1 {
  	status = "okay";
  };
-@@ -793,22 +798,131 @@ &qupv3_id_2 {
+@@ -793,22 +808,131 @@ &qupv3_id_2 {
  
  &remoteproc_adsp {
  	status = "okay";
@@ -244,7 +237,7 @@ index e51e2f1b4..95b07704e 100644
  };
  
  &tlmm {
-@@ -1100,6 +1214,29 @@ tp_reset_suspend: tp_reset_suspend {
+@@ -1100,6 +1224,29 @@ tp_reset_suspend: tp_reset_suspend {
          bias-disable;
          output-high;
      };
@@ -274,7 +267,7 @@ index e51e2f1b4..95b07704e 100644
  };
  
  &uart2 {
-@@ -1184,3 +1321,19 @@ &wifi {
+@@ -1184,3 +1331,19 @@ &wifi {
  
  	status = "okay";
  };
@@ -295,45 +288,6 @@ index e51e2f1b4..95b07704e 100644
 +	interconnect-names = "mdp0-mem", "mdp1-mem";
 +};
 \ No newline at end of file
-diff --git a/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c b/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c
-index f8ebbd4a5..6646d9a54 100644
---- a/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c
-+++ b/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c
-@@ -79,6 +79,10 @@ static int ams639rq08_on(struct ams639rq08 *ctx)
- 	/* DBV Smooth Transition */
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_UNKNOWN_B7, 0x01, 0x4b);
- 
-+	/* Timing Set (gate driver) */
-+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_ACCESS_PROT_OFF, 0x07);
-+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd9, 0x88, 0x2e);
-+
- 	/* Edge Dimming Speed Setting */
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_ACCESS_PROT_OFF, 0x06);
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_UNKNOWN_B7, 0x10);
-@@ -94,11 +98,6 @@ static int ams639rq08_on(struct ams639rq08 *ctx)
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_ACCESS_PROT_OFF, 0x23);
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_BIAS_CURRENT_CTRL, 0x11);
- 
--	/* OFC Setting 84.1 Mhz */
--	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe9, 0x11, 0x55,
--					       0xa6, 0x75, 0xa3,
--					       0xb9, 0xa1, 0x4a,
--					       0x00, 0x1a, 0xb8);
- 
- 	/* Err_FG Setting */
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe1,
-@@ -107,6 +106,11 @@ static int ams639rq08_on(struct ams639rq08 *ctx)
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe2,
- 					       0x00, 0x00, 0x00,
- 					       0x00, 0x00, 0x00);
-+	/* OFC Setting 84.1 Mhz */
-+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe9, 0x11, 0x55,
-+					       0xa6, 0x75, 0xa3,
-+					       0xb9, 0xa1, 0x4a,
-+					       0x00, 0x1a, 0xb8);
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_ACCESS_PROT_OFF, 0x0c);
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe1, 0x19);
- 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_PASSWD1, 0xa5, 0xa5);
 diff --git a/arch/arm64/kernel/cpuinfo.c b/arch/arm64/kernel/cpuinfo.c
 index 6149bc912..c010daea5 100644
 --- a/arch/arm64/kernel/cpuinfo.c
@@ -719,6 +673,427 @@ index 9047e8d9e..9f39a6245 100644
  
  	msm_mdss = devm_kzalloc(&pdev->dev, sizeof(*msm_mdss), GFP_KERNEL);
  	if (!msm_mdss)
+diff --git a/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c b/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c
+index f8ebbd4a5..6646d9a54 100644
+--- a/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c
++++ b/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c
+@@ -79,6 +79,10 @@ static int ams639rq08_on(struct ams639rq08 *ctx)
+ 	/* DBV Smooth Transition */
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_UNKNOWN_B7, 0x01, 0x4b);
+ 
++	/* Timing Set (gate driver) */
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_ACCESS_PROT_OFF, 0x07);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd9, 0x88, 0x2e);
++
+ 	/* Edge Dimming Speed Setting */
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_ACCESS_PROT_OFF, 0x06);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_UNKNOWN_B7, 0x10);
+@@ -94,11 +98,6 @@ static int ams639rq08_on(struct ams639rq08 *ctx)
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_ACCESS_PROT_OFF, 0x23);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_BIAS_CURRENT_CTRL, 0x11);
+ 
+-	/* OFC Setting 84.1 Mhz */
+-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe9, 0x11, 0x55,
+-					       0xa6, 0x75, 0xa3,
+-					       0xb9, 0xa1, 0x4a,
+-					       0x00, 0x1a, 0xb8);
+ 
+ 	/* Err_FG Setting */
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe1,
+@@ -107,6 +106,11 @@ static int ams639rq08_on(struct ams639rq08 *ctx)
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe2,
+ 					       0x00, 0x00, 0x00,
+ 					       0x00, 0x00, 0x00);
++	/* OFC Setting 84.1 Mhz */
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe9, 0x11, 0x55,
++					       0xa6, 0x75, 0xa3,
++					       0xb9, 0xa1, 0x4a,
++					       0x00, 0x1a, 0xb8);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_ACCESS_PROT_OFF, 0x0c);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe1, 0x19);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MCS_PASSWD1, 0xa5, 0xa5);
+diff --git a/drivers/net/ipa/data/ipa_data-v4.1.c b/drivers/net/ipa/data/ipa_data-v4.1.c
+index 5d5589c69..11fac8552 100644
+--- a/drivers/net/ipa/data/ipa_data-v4.1.c
++++ b/drivers/net/ipa/data/ipa_data-v4.1.c
+@@ -101,8 +101,8 @@ static const struct ipa_gsi_endpoint_data ipa_gsi_endpoint_data[] = {
+ 	},
+ 	[IPA_ENDPOINT_AP_MODEM_TX] = { /* Downstream: IPA_CLIENT_APPS_WAN_PROD */
+ 		.ee_id		= GSI_EE_AP,
+-		.channel_id	= 2,
+-		.endpoint_id	= 3,
++		.channel_id	= 3,
++		.endpoint_id	= 2,
+ 		.toward_ipa	= true,
+ 		.channel = {
+ 			.tre_count	= 512,
+diff --git a/drivers/net/ipa/gsi.c b/drivers/net/ipa/gsi.c
+index 4c3227e77..5dd23c493 100644
+--- a/drivers/net/ipa/gsi.c
++++ b/drivers/net/ipa/gsi.c
+@@ -945,6 +945,19 @@ int gsi_channel_start(struct gsi *gsi, u32 channel_id)
+ 	struct gsi_channel *channel = &gsi->channel[channel_id];
+ 	int ret;
+ 
++	/* A channel the AP does not own (e.g. a modem channel) has no NAPI
++	 * context registered, so channel->napi.dev is NULL.  Starting such a
++	 * channel would dereference a NULL napi->dev in napi_enable().  Guard
++	 * against a mis-configured endpoint table pointing at a foreign
++	 * channel rather than taking the box down with a NULL deref.
++	 */
++	if (!channel->gsi || !channel->napi.dev) {
++		dev_err(gsi->dev,
++			"channel %u not initialized for the AP, refusing start\n",
++			channel_id);
++		return -EINVAL;
++	}
++
+ 	/* Enable NAPI and the completion interrupt */
+ 	napi_enable(&channel->napi);
+ 	gsi_irq_ieob_enable_one(gsi, channel->evt_ring_id);
+diff --git a/drivers/net/ipa/gsi_trans.c b/drivers/net/ipa/gsi_trans.c
+index ecd9a3b87..30ed5a8d5 100644
+--- a/drivers/net/ipa/gsi_trans.c
++++ b/drivers/net/ipa/gsi_trans.c
+@@ -610,8 +610,11 @@ void gsi_trans_commit(struct gsi_trans *trans, bool ring_db)
+ }
+ 
+ /* Commit a GSI transaction and wait for it to complete */
+-void gsi_trans_commit_wait(struct gsi_trans *trans)
++bool gsi_trans_commit_wait_timeout(struct gsi_trans *trans,
++				   unsigned long timeout)
+ {
++	unsigned long ret;
++
+ 	if (!trans->used_count)
+ 		goto out_trans_free;
+ 
+@@ -619,10 +622,21 @@ void gsi_trans_commit_wait(struct gsi_trans *trans)
+ 
+ 	__gsi_trans_commit(trans, true);
+ 
+-	wait_for_completion(&trans->completion);
++	ret = wait_for_completion_timeout(&trans->completion, timeout);
++	if (!ret)
++		dev_warn(trans->gsi->dev,
++			 "GSI transaction timed out (used %u TREs)\n",
++			 trans->used_count);
+ 
+ out_trans_free:
+ 	gsi_trans_free(trans);
++
++	return !!ret;
++}
++
++void gsi_trans_commit_wait(struct gsi_trans *trans)
++{
++	(void)gsi_trans_commit_wait_timeout(trans, MAX_SCHEDULE_TIMEOUT);
+ }
+ 
+ /* Process the completion of a transaction; called while polling */
+diff --git a/drivers/net/ipa/gsi_trans.h b/drivers/net/ipa/gsi_trans.h
+index c1b3386cb..a2f48ddb5 100644
+--- a/drivers/net/ipa/gsi_trans.h
++++ b/drivers/net/ipa/gsi_trans.h
+@@ -205,6 +205,16 @@ void gsi_trans_commit(struct gsi_trans *trans, bool ring_db);
+  */
+ void gsi_trans_commit_wait(struct gsi_trans *trans);
+ 
++/**
++ * gsi_trans_commit_wait_timeout() - Commit a GSI transaction and wait with timeout
++ * @trans:	Transaction to commit
++ * @timeout:	Timeout in jiffies
++ *
++ * Return: true if the transaction completed, false on timeout.
++ */
++bool gsi_trans_commit_wait_timeout(struct gsi_trans *trans,
++				   unsigned long timeout);
++
+ /**
+  * gsi_trans_read_byte() - Issue a single byte read TRE on a channel
+  * @gsi:	GSI pointer
+diff --git a/drivers/net/ipa/ipa_cmd.c b/drivers/net/ipa/ipa_cmd.c
+index 984311a9a..b759ab632 100644
+--- a/drivers/net/ipa/ipa_cmd.c
++++ b/drivers/net/ipa/ipa_cmd.c
+@@ -614,9 +614,21 @@ u32 ipa_cmd_pipeline_clear_count(void)
+ 	return 4;
+ }
+ 
++bool ipa_cmd_pipeline_clear_wait_timeout(struct ipa *ipa,
++					 unsigned long timeout)
++{
++	unsigned long ret;
++
++	ret = wait_for_completion_timeout(&ipa->completion, timeout);
++	if (!ret)
++		dev_warn(ipa->dev, "IPA pipeline clear timed out\n");
++
++	return !!ret;
++}
++
+ void ipa_cmd_pipeline_clear_wait(struct ipa *ipa)
+ {
+-	wait_for_completion(&ipa->completion);
++	(void)ipa_cmd_pipeline_clear_wait_timeout(ipa, MAX_SCHEDULE_TIMEOUT);
+ }
+ 
+ /* Allocate a transaction for the command TX endpoint */
+diff --git a/drivers/net/ipa/ipa_cmd.h b/drivers/net/ipa/ipa_cmd.h
+index 2077fdbad..d0a6bb81a 100644
+--- a/drivers/net/ipa/ipa_cmd.h
++++ b/drivers/net/ipa/ipa_cmd.h
+@@ -140,6 +140,16 @@ u32 ipa_cmd_pipeline_clear_count(void);
+  */
+ void ipa_cmd_pipeline_clear_wait(struct ipa *ipa);
+ 
++/**
++ * ipa_cmd_pipeline_clear_wait_timeout() - Wait for pipeline clear with timeout
++ * @ipa:	IPA pointer
++ * @timeout:	Timeout in jiffies
++ *
++ * Return: true if pipeline clear completed, false on timeout.
++ */
++bool ipa_cmd_pipeline_clear_wait_timeout(struct ipa *ipa,
++					 unsigned long timeout);
++
+ /**
+  * ipa_cmd_trans_alloc() - Allocate a transaction for the command TX endpoint
+  * @ipa:	IPA pointer
+diff --git a/drivers/net/ipa/ipa_main.c b/drivers/net/ipa/ipa_main.c
+index 349a2d44f..4ec05d2f4 100644
+--- a/drivers/net/ipa/ipa_main.c
++++ b/drivers/net/ipa/ipa_main.c
+@@ -907,6 +907,14 @@ static int ipa_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_deconfig;
+ done:
++	/*
++	 * IPA v4.1 (SM8150): modem HWP init requires IPA clocks/registers
++	 * to remain accessible after probe.  Runtime suspend causes the
++	 * modem to watchdog (~10-15s) waiting for HWP indications.
++	 */
++	if (data->version == IPA_VERSION_4_1)
++		pm_runtime_forbid(dev);
++
+ 	(void)pm_runtime_put_autosuspend(dev);
+ 
+ 	return 0;
+@@ -983,6 +991,8 @@ static void ipa_remove(struct platform_device *pdev)
+ 
+ 	ipa_deconfig(ipa);
+ out_power_put:
++	if (ipa->version == IPA_VERSION_4_1)
++		pm_runtime_allow(dev);
+ 	pm_runtime_put_noidle(dev);
+ 	ipa_smp2p_exit(ipa);
+ 	ipa_table_exit(ipa);
+diff --git a/drivers/net/ipa/ipa_modem.c b/drivers/net/ipa/ipa_modem.c
+index 9b136f6b8..b4523f761 100644
+--- a/drivers/net/ipa/ipa_modem.c
++++ b/drivers/net/ipa/ipa_modem.c
+@@ -56,6 +56,11 @@ static int ipa_open(struct net_device *netdev)
+ 	struct device *dev;
+ 	int ret;
+ 
++	if (!priv->tx || !priv->rx) {
++		dev_err(ipa->dev, "modem endpoints not configured\n");
++		return -ENODEV;
++	}
++
+ 	dev = ipa->dev;
+ 	ret = pm_runtime_get_sync(dev);
+ 	if (ret < 0)
+@@ -403,31 +408,37 @@ static void ipa_modem_crashed(struct ipa *ipa)
+ 		goto out_power_put;
+ 	}
+ 
++	pr_emerg("SSRDBG: ipa_modem_crashed ENTER\n");
+ 	ipa_endpoint_modem_pause_all(ipa, true);
+ 
+ 	ipa_endpoint_modem_hol_block_clear_all(ipa);
+ 
++	pr_emerg("SSRDBG: ipa before table_reset\n");
+ 	ipa_table_reset(ipa, true);
+ 
++	pr_emerg("SSRDBG: ipa before hash_flush\n");
+ 	ret = ipa_table_hash_flush(ipa);
+ 	if (ret)
+ 		dev_err(dev, "error %d flushing hash caches\n", ret);
+ 
++	pr_emerg("SSRDBG: ipa before exception_reset\n");
+ 	ret = ipa_endpoint_modem_exception_reset_all(ipa);
+ 	if (ret)
+ 		dev_err(dev, "error %d resetting exception endpoint\n", ret);
+ 
+ 	ipa_endpoint_modem_pause_all(ipa, false);
+ 
++	pr_emerg("SSRDBG: ipa before modem_stop\n");
+ 	ret = ipa_modem_stop(ipa);
+ 	if (ret)
+ 		dev_err(dev, "error %d stopping modem\n", ret);
+ 
+-	/* Now prepare for the next modem boot */
++	pr_emerg("SSRDBG: ipa before mem_zero_modem\n");
+ 	ret = ipa_mem_zero_modem(ipa);
+ 	if (ret)
+ 		dev_err(dev, "error %d zeroing modem memory regions\n", ret);
+ 
++	pr_emerg("SSRDBG: ipa_modem_crashed EXIT\n");
+ out_power_put:
+ 	(void)pm_runtime_put_autosuspend(dev);
+ }
+diff --git a/drivers/net/ipa/ipa_power.c b/drivers/net/ipa/ipa_power.c
+index c572da9e9..bb3d8107d 100644
+--- a/drivers/net/ipa/ipa_power.c
++++ b/drivers/net/ipa/ipa_power.c
+@@ -7,6 +7,7 @@
+ #include <linux/clk.h>
+ #include <linux/device.h>
+ #include <linux/interconnect.h>
++#include <linux/of.h>
+ #include <linux/pm.h>
+ #include <linux/pm_runtime.h>
+ 
+@@ -270,7 +271,15 @@ ipa_power_init(struct device *dev, const struct ipa_power_data *data)
+ 	if (ret)
+ 		goto err_interconnect_exit;
+ 
+-	pm_runtime_set_autosuspend_delay(dev, IPA_AUTOSUSPEND_DELAY);
++	{
++		const struct ipa_data *ipa_data = of_device_get_match_data(dev);
++		unsigned int autosuspend_delay = IPA_AUTOSUSPEND_DELAY;
++
++		if (ipa_data && ipa_data->version == IPA_VERSION_4_1)
++			autosuspend_delay = INT_MAX;
++
++		pm_runtime_set_autosuspend_delay(dev, autosuspend_delay);
++	}
+ 	pm_runtime_use_autosuspend(dev);
+ 	pm_runtime_enable(dev);
+ 
+diff --git a/drivers/net/ipa/ipa_smp2p.c b/drivers/net/ipa/ipa_smp2p.c
+index 2f0ccdd93..f889273fa 100644
+--- a/drivers/net/ipa/ipa_smp2p.c
++++ b/drivers/net/ipa/ipa_smp2p.c
+@@ -109,9 +109,23 @@ static void ipa_smp2p_notify(struct ipa_smp2p *smp2p)
+ static irqreturn_t ipa_smp2p_modem_clk_query_isr(int irq, void *dev_id)
+ {
+ 	struct ipa_smp2p *smp2p = dev_id;
++	struct ipa *ipa = smp2p->ipa;
++	struct device *dev = ipa->dev;
++	bool woke = false;
++	int ret;
++
++	if (pm_runtime_get_if_active(dev) <= 0) {
++		ret = pm_runtime_get_sync(dev);
++		if (ret < 0)
++			return IRQ_HANDLED;
++		woke = true;
++	}
+ 
+ 	ipa_smp2p_notify(smp2p);
+ 
++	if (woke)
++		(void)pm_runtime_put_autosuspend(dev);
++
+ 	return IRQ_HANDLED;
+ }
+ 
+diff --git a/drivers/remoteproc/qcom_common.c b/drivers/remoteproc/qcom_common.c
+index 6c3114026..a946b39aa 100644
+--- a/drivers/remoteproc/qcom_common.c
++++ b/drivers/remoteproc/qcom_common.c
+@@ -462,8 +462,10 @@ static void ssr_notify_stop(struct rproc_subdev *subdev, bool crashed)
+ 		.crashed = crashed,
+ 	};
+ 
++	pr_emerg("SSRDBG: ssr_notify_stop ENTER (%s)\n", ssr->info->name);
+ 	srcu_notifier_call_chain(&ssr->info->notifier_list,
+ 				 QCOM_SSR_BEFORE_SHUTDOWN, &data);
++	pr_emerg("SSRDBG: ssr_notify_stop EXIT (%s)\n", ssr->info->name);
+ }
+ 
+ static void ssr_notify_unprepare(struct rproc_subdev *subdev)
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index 46204da04..4e802b09d 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -402,11 +402,14 @@ static int qcom_pas_stop(struct rproc *rproc)
+ 	int handover;
+ 	int ret;
+ 
++	pr_emerg("SSRDBG: qcom_pas_stop ENTER, before request_stop\n");
+ 	ret = qcom_q6v5_request_stop(&pas->q6v5, pas->sysmon);
+ 	if (ret == -ETIMEDOUT)
+ 		dev_err(pas->dev, "timed out on wait\n");
++	pr_emerg("SSRDBG: qcom_pas_stop after request_stop ret=%d, before scm_pas_shutdown\n", ret);
+ 
+ 	ret = qcom_scm_pas_shutdown(pas->pas_id);
++	pr_emerg("SSRDBG: qcom_pas_stop after scm_pas_shutdown ret=%d\n", ret);
+ 	if (ret && pas->decrypt_shutdown)
+ 		ret = qcom_pas_shutdown_poll_decrypt(pas);
+ 
+@@ -423,6 +426,7 @@ static int qcom_pas_stop(struct rproc *rproc)
+ 
+ 	qcom_pas_unmap_carveout(rproc, pas->mem_phys, pas->mem_size);
+ 
++	pr_emerg("SSRDBG: qcom_pas_stop before unprepare/handover\n");
+ 	handover = qcom_q6v5_unprepare(&pas->q6v5);
+ 	if (handover)
+ 		qcom_pas_handover(&pas->q6v5);
+@@ -430,6 +434,7 @@ static int qcom_pas_stop(struct rproc *rproc)
+ 	if (pas->smem_host_id)
+ 		ret = qcom_smem_bust_hwspin_lock_by_host(pas->smem_host_id);
+ 
++	pr_emerg("SSRDBG: qcom_pas_stop EXIT\n");
+ 	return ret;
+ }
+ 
+diff --git a/drivers/remoteproc/remoteproc_core.c b/drivers/remoteproc/remoteproc_core.c
+index b087ed218..eed74618c 100644
+--- a/drivers/remoteproc/remoteproc_core.c
++++ b/drivers/remoteproc/remoteproc_core.c
+@@ -1120,8 +1120,11 @@ static void rproc_stop_subdevices(struct rproc *rproc, bool crashed)
+ 	struct rproc_subdev *subdev;
+ 
+ 	list_for_each_entry_reverse(subdev, &rproc->subdevs, node) {
+-		if (subdev->stop)
++		if (subdev->stop) {
++			pr_emerg("SSRDBG: subdev->stop %ps ENTER\n", subdev->stop);
+ 			subdev->stop(subdev, crashed);
++			pr_emerg("SSRDBG: subdev->stop %ps EXIT\n", subdev->stop);
++		}
+ 	}
+ }
+ 
+@@ -1708,8 +1711,10 @@ static int rproc_stop(struct rproc *rproc, bool crashed)
+ 	if (!rproc->ops->stop)
+ 		return -EINVAL;
+ 
++	pr_emerg("SSRDBG: rproc_stop ENTER, before stop_subdevices\n");
+ 	/* Stop any subdevices for the remote processor */
+ 	rproc_stop_subdevices(rproc, crashed);
++	pr_emerg("SSRDBG: rproc_stop after stop_subdevices\n");
+ 
+ 	/* the installed resource table is no longer accessible */
+ 	ret = rproc_reset_rsc_table_on_stop(rproc);
+@@ -1718,13 +1723,14 @@ static int rproc_stop(struct rproc *rproc, bool crashed)
+ 		return ret;
+ 	}
+ 
+-
++	pr_emerg("SSRDBG: rproc_stop before ops->stop\n");
+ 	/* power off the remote processor */
+ 	ret = rproc->ops->stop(rproc);
+ 	if (ret) {
+ 		dev_err(dev, "can't stop rproc: %d\n", ret);
+ 		return ret;
+ 	}
++	pr_emerg("SSRDBG: rproc_stop after ops->stop\n");
+ 
+ 	rproc_unprepare_subdevices(rproc);
+ 
 diff --git a/scripts/package/builddeb b/scripts/package/builddeb
 index 3627ca227..6623de337 100755
 --- a/scripts/package/builddeb
