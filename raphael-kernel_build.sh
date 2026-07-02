@@ -57,6 +57,8 @@ git apply --check ../patchs/raphael.patch
 git apply ../patchs/raphael.patch
 git apply --check ../patchs/slpi-sm8150-raphael.patch
 git apply ../patchs/slpi-sm8150-raphael.patch
+git apply --check ../patchs/ak09970-raphael.patch
+git apply ../patchs/ak09970-raphael.patch
 
 # 生成内核配置
 cp ../raphael.config arch/arm64/configs/

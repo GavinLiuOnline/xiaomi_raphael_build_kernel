@@ -1,0 +1,659 @@
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
+@@ -613,6 +613,27 @@
+ 	};
+ };
+ 
++&i2c4 {
++	status = "okay";
++	clock-frequency = <400000>;
++
++	akm09970@c {
++		compatible = "akm,akm09970";
++		reg = <0x0c>;
++		interrupt-parent = <&tlmm>;
++		interrupts = <27 IRQ_TYPE_EDGE_FALLING>;
++
++		reset-gpios = <&tlmm 11 GPIO_ACTIVE_HIGH>;
++		irq-gpios = <&tlmm 27 GPIO_ACTIVE_HIGH>;
++		akm,measure-freq-hz = <100>;
++		vdd-supply = <&vreg_l8c_1p8>;
++
++		pinctrl-names = "default", "sleep";
++		pinctrl-0 = <&akm_irq_active &akm_reset_active>;
++		pinctrl-1 = <&akm_irq_suspend &akm_reset_suspend>;
++	};
++};
++
+ &ipa {
+ 	status = "okay";
+ 	qcom,gsi-loader = "self";
+@@ -1165,6 +1186,35 @@
+         bias-pull-down;
+     };
+ 
++    akm_irq_active: akm_irq_active {
++        pins = "gpio27";
++        function = "gpio";
++        drive-strength = <2>;
++        bias-pull-up;
++    };
++
++    akm_irq_suspend: akm_irq_suspend {
++        pins = "gpio27";
++        function = "gpio";
++        drive-strength = <2>;
++        bias-disable;
++    };
++
++    akm_reset_active: akm_reset_active {
++        pins = "gpio11";
++        function = "gpio";
++        drive-strength = <2>;
++        bias-pull-down;
++        output-low;
++    };
++
++    akm_reset_suspend: akm_reset_suspend {
++        pins = "gpio11";
++        function = "gpio";
++        drive-strength = <2>;
++        bias-disable;
++    };
++
+     qup_uart13_default: qup-uart13-default-state {
+ 	cts-pins {
+ 		pins = "gpio43";
+diff --git a/drivers/iio/magnetometer/akm09970.c b/drivers/iio/magnetometer/akm09970.c
+new file mode 100644
+index 000000000..fed286849
+--- /dev/null
++++ b/drivers/iio/magnetometer/akm09970.c
+@@ -0,0 +1,483 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * AKM AK09970 3-axis digital hall sensor driver for Xiaomi Raphael.
++ * Ported from android_kernel_xiaomi_sm8150 drivers/misc/akm09970.c
++ */
++#include <linux/module.h>
++#include <linux/delay.h>
++#include <linux/interrupt.h>
++#include <linux/i2c.h>
++#include <linux/slab.h>
++#include <linux/of.h>
++#include <linux/gpio/consumer.h>
++#include <linux/regulator/consumer.h>
++#include <linux/poll.h>
++#include <linux/miscdevice.h>
++#include <linux/iio/magnetometer/ak09970.h>
++#include <uapi/linux/akm09970.h>
++
++struct akm09970_data {
++	struct i2c_client *client;
++	struct device *dev;
++
++	struct gpio_desc *reset_gpio;
++	struct gpio_desc *irq_gpio;
++	int irq;
++
++	struct regulator *vdd;
++
++	atomic_t power_enabled;
++	atomic_t data_ready;
++
++	uint8_t chip_info[AKM_SENSOR_INFO_SIZE];
++	uint8_t chip_data[AKM_SENSOR_DATA_SIZE];
++	uint8_t measure_range;
++	uint32_t measure_freq_hz;
++	bool read_flag;
++
++	struct work_struct report_work;
++	struct workqueue_struct *work_queue;
++
++	struct miscdevice miscdev;
++	wait_queue_head_t poll_wait;
++
++	struct akm09970_platform_data pdata;
++};
++
++static int akm09970_write_byte(struct akm09970_data *data, u8 reg, u8 val)
++{
++	int rc;
++
++	if (data->irq > 0)
++		disable_irq_nosync(data->irq);
++
++	rc = i2c_smbus_write_byte_data(data->client, reg, val);
++
++	if (data->irq > 0)
++		enable_irq(data->irq);
++
++	return rc;
++}
++
++static void akm09970_reset(struct akm09970_data *data)
++{
++	gpiod_set_value(data->reset_gpio, 0);
++	udelay(50);
++	gpiod_set_value(data->reset_gpio, 1);
++	udelay(100);
++}
++
++static int akm09970_power_down(struct akm09970_data *data)
++{
++	int rc = 0;
++
++	if (!atomic_read(&data->power_enabled))
++		return 0;
++
++	gpiod_set_value(data->reset_gpio, 0);
++	rc = regulator_disable(data->vdd);
++	if (rc)
++		dev_err(data->dev, "regulator disable failed: %d\n", rc);
++
++	atomic_set(&data->power_enabled, 0);
++	return rc;
++}
++
++static int akm09970_power_up(struct akm09970_data *data)
++{
++	int rc;
++
++	if (atomic_read(&data->power_enabled))
++		return 0;
++
++	rc = regulator_enable(data->vdd);
++	if (rc) {
++		dev_err(data->dev, "regulator enable failed: %d\n", rc);
++		return rc;
++	}
++
++	udelay(20);
++	akm09970_reset(data);
++	atomic_set(&data->power_enabled, 1);
++	return 0;
++}
++
++static u8 akm09970_mode_from_hz(u32 hz)
++{
++	if (hz >= 100)
++		return AK09970_MODE_CONT_MEASURE_MODE5;
++	if (hz >= 50)
++		return AK09970_MODE_CONT_MEASURE_MODE4;
++	if (hz >= 20)
++		return AK09970_MODE_CONT_MEASURE_MODE3;
++	return AK09970_MODE_CONT_MEASURE_MODE2;
++}
++
++static int akm09970_active(struct akm09970_data *data, bool on)
++{
++	int rc;
++	u8 mode;
++
++	if (!atomic_read(&data->power_enabled) && on) {
++		rc = akm09970_power_up(data);
++		if (rc)
++			return rc;
++
++		mode = akm09970_mode_from_hz(data->measure_freq_hz);
++		data->measure_range = 0;
++
++		rc = akm09970_write_byte(data, AK09970_REG_CNTL2,
++					 mode | data->measure_range);
++		if (rc < 0) {
++			akm09970_power_down(data);
++			return rc;
++		}
++
++		enable_irq(data->irq);
++		data->read_flag = false;
++	} else if (atomic_read(&data->power_enabled) && !on) {
++		disable_irq_nosync(data->irq);
++		cancel_work_sync(&data->report_work);
++		data->read_flag = false;
++
++		rc = akm09970_write_byte(data, AK09970_REG_CNTL2,
++					 AK09970_MODE_POWER_DOWN);
++		if (rc)
++			dev_warn(data->dev, "powerdown write failed: %d\n", rc);
++
++		akm09970_power_down(data);
++	}
++
++	return 0;
++}
++
++static int akm09970_read_data(struct akm09970_data *data)
++{
++	int rc;
++
++	rc = i2c_smbus_read_i2c_block_data(data->client, AK09970_REG_ST1_ZYX,
++					   AKM_SENSOR_DATA_SIZE, data->chip_data);
++	if (rc < 0)
++		return rc;
++
++	if (data->chip_data[0] & 0x01) {
++		dev_err(data->dev, "ADC overrun\n");
++		return -EIO;
++	}
++
++	if (data->chip_data[1] & 0x80) {
++		dev_err(data->dev, "XY error\n");
++		return -EIO;
++	}
++
++	return 0;
++}
++
++static void akm09970_report_work(struct work_struct *work)
++{
++	struct akm09970_data *data =
++		container_of(work, struct akm09970_data, report_work);
++
++	if (akm09970_read_data(data) < 0)
++		atomic_set(&data->data_ready, 0);
++	else
++		atomic_set(&data->data_ready, 1);
++
++	wake_up_interruptible(&data->poll_wait);
++	data->read_flag = true;
++}
++
++static irqreturn_t akm09970_irq_handler(int irq, void *dev_id)
++{
++	struct akm09970_data *data = dev_id;
++
++	queue_work(data->work_queue, &data->report_work);
++	return IRQ_HANDLED;
++}
++
++static short akm09970_parse_axis(const u8 *buf, int lo, int hi)
++{
++	return (short)((u16)buf[hi] << 8 | buf[lo]);
++}
++
++static ssize_t hall_x_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	struct akm09970_data *data = dev_get_drvdata(dev);
++	short x = akm09970_parse_axis(data->chip_data, 6, 5);
++
++	return sysfs_emit(buf, "%d\n", x);
++}
++
++static ssize_t hall_y_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	struct akm09970_data *data = dev_get_drvdata(dev);
++	short y = akm09970_parse_axis(data->chip_data, 4, 3);
++
++	return sysfs_emit(buf, "%d\n", y);
++}
++
++static ssize_t hall_z_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	struct akm09970_data *data = dev_get_drvdata(dev);
++	short z = akm09970_parse_axis(data->chip_data, 2, 1);
++
++	return sysfs_emit(buf, "%d\n", z);
++}
++
++static ssize_t raw_data_show(struct device *dev, struct device_attribute *attr,
++			     char *buf)
++{
++	struct akm09970_data *data = dev_get_drvdata(dev);
++	short x = akm09970_parse_axis(data->chip_data, 6, 5);
++	short y = akm09970_parse_axis(data->chip_data, 4, 3);
++	short z = akm09970_parse_axis(data->chip_data, 2, 1);
++	int len = 0;
++	int i;
++
++	for (i = 0; i < AKM_SENSOR_DATA_SIZE; i++)
++		len += sysfs_emit_at(buf, len, "%02x ", data->chip_data[i]);
++	len += sysfs_emit_at(buf, len, "\nxyz: %d %d %d\n", x, y, z);
++
++	return len;
++}
++
++static DEVICE_ATTR_RO(hall_x);
++static DEVICE_ATTR_RO(hall_y);
++static DEVICE_ATTR_RO(hall_z);
++static DEVICE_ATTR_RO(raw_data);
++
++static struct attribute *akm09970_attrs[] = {
++	&dev_attr_hall_x.attr,
++	&dev_attr_hall_y.attr,
++	&dev_attr_hall_z.attr,
++	&dev_attr_raw_data.attr,
++	NULL,
++};
++
++static const struct attribute_group akm09970_attr_group = {
++	.attrs = akm09970_attrs,
++};
++
++static int akm09970_check_device_id(struct akm09970_data *data)
++{
++	int rc;
++
++	rc = akm09970_power_up(data);
++	if (rc < 0)
++		return rc;
++
++	rc = i2c_smbus_read_i2c_block_data(data->client, AK09970_REG_DID,
++					   AKM_SENSOR_INFO_SIZE, data->chip_info);
++	if (rc < 0)
++		goto out;
++
++	if (data->chip_info[0] != AK09970_WIA1_VALUE ||
++	    data->chip_info[1] != AK09970_WIA2_VALUE) {
++		dev_err(data->dev, "unexpected chip id %02x %02x\n",
++			data->chip_info[0], data->chip_info[1]);
++		rc = -ENODEV;
++	}
++
++out:
++	akm09970_power_down(data);
++	return rc;
++}
++
++static long akm09970_ioctl(struct file *filp, unsigned int cmd,
++			   unsigned long arg)
++{
++	struct akm09970_data *data =
++		container_of(filp->private_data, struct akm09970_data, miscdev);
++	int i, rc = 0;
++
++	if (_IOC_TYPE(cmd) != AKM_IOC_MAGIC)
++		return -ENOTTY;
++
++	if (_IOC_DIR(cmd) & _IOC_WRITE) {
++		if (copy_from_user(&data->pdata, (void __user *)arg,
++				   sizeof(data->pdata)))
++			return -EFAULT;
++	}
++
++	switch (cmd) {
++	case AKM_IOC_SET_ACTIVE:
++		rc = akm09970_active(data, data->pdata.sensor_state);
++		break;
++	case AKM_IOC_SET_MODE:
++		data->measure_freq_hz = data->pdata.sensor_mode;
++		break;
++	case AKM_IOC_GET_SENSSMR:
++		data->pdata.sensor_smr = data->measure_range;
++		break;
++	case AKM_IOC_GET_SENSEDATA:
++		for (i = 0; i < AKM_SENSOR_DATA_SIZE; i++)
++			data->pdata.data[i] = data->chip_data[i];
++		break;
++	default:
++		return -ENOTTY;
++	}
++
++	if (_IOC_DIR(cmd) & _IOC_READ) {
++		if (copy_to_user((void __user *)arg, &data->pdata,
++				 sizeof(data->pdata)))
++			return -EFAULT;
++	}
++
++	return rc;
++}
++
++static __poll_t akm09970_poll(struct file *filp, poll_table *wait)
++{
++	struct akm09970_data *data =
++		container_of(filp->private_data, struct akm09970_data, miscdev);
++
++	poll_wait(filp, &data->poll_wait, wait);
++	if (atomic_read(&data->data_ready)) {
++		atomic_set(&data->data_ready, 0);
++		return EPOLLIN | EPOLLRDNORM;
++	}
++
++	return 0;
++}
++
++static const struct file_operations akm09970_fops = {
++	.owner		= THIS_MODULE,
++	.unlocked_ioctl	= akm09970_ioctl,
++	.poll		= akm09970_poll,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl	= compat_ptr_ioctl,
++#endif
++};
++
++static int akm09970_probe(struct i2c_client *client)
++{
++	struct akm09970_data *data;
++	int rc;
++
++	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
++		return -ENODEV;
++
++	data = devm_kzalloc(&client->dev, sizeof(*data), GFP_KERNEL);
++	if (!data)
++		return -ENOMEM;
++
++	data->client = client;
++	data->dev = &client->dev;
++	data->measure_freq_hz = 100;
++	dev_set_drvdata(&client->dev, data);
++	i2c_set_clientdata(client, data);
++	init_waitqueue_head(&data->poll_wait);
++
++	data->reset_gpio = devm_gpiod_get(&client->dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(data->reset_gpio))
++		return dev_err_probe(&client->dev, PTR_ERR(data->reset_gpio),
++				     "reset gpio missing\n");
++
++	data->irq_gpio = devm_gpiod_get(&client->dev, "irq", GPIOD_IN);
++	if (IS_ERR(data->irq_gpio))
++		return dev_err_probe(&client->dev, PTR_ERR(data->irq_gpio),
++				     "irq gpio missing\n");
++
++	of_property_read_u32(client->dev.of_node, "akm,measure-freq-hz",
++			     &data->measure_freq_hz);
++
++	data->vdd = devm_regulator_get(&client->dev, "vdd");
++	if (IS_ERR(data->vdd))
++		return dev_err_probe(&client->dev, PTR_ERR(data->vdd),
++				     "vdd regulator missing\n");
++
++	rc = regulator_set_voltage(data->vdd, 1800000, 1800000);
++	if (rc)
++		dev_warn(&client->dev, "vdd voltage set failed: %d\n", rc);
++
++	data->irq = gpiod_to_irq(data->irq_gpio);
++	if (data->irq < 0)
++		return dev_err_probe(&client->dev, data->irq, "irq mapping failed\n");
++
++	rc = devm_request_threaded_irq(&client->dev, data->irq, NULL,
++				       akm09970_irq_handler,
++				       IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
++				       "akm09970", data);
++	if (rc)
++		return dev_err_probe(&client->dev, rc, "irq request failed\n");
++
++	disable_irq(data->irq);
++
++	rc = akm09970_check_device_id(data);
++	if (rc)
++		return dev_err_probe(&client->dev, rc, "chip id check failed\n");
++
++	data->work_queue = alloc_workqueue("akm09970", WQ_UNBOUND | WQ_HIGHPRI, 1);
++	if (!data->work_queue)
++		return -ENOMEM;
++	INIT_WORK(&data->report_work, akm09970_report_work);
++
++	rc = sysfs_create_group(&client->dev.kobj, &akm09970_attr_group);
++	if (rc)
++		goto err_wq;
++
++	data->miscdev.minor = MISC_DYNAMIC_MINOR;
++	data->miscdev.name = AKM09970_DRV_NAME;
++	data->miscdev.fops = &akm09970_fops;
++	data->miscdev.parent = &client->dev;
++
++	rc = misc_register(&data->miscdev);
++	if (rc)
++		goto err_sysfs;
++
++	rc = akm09970_active(data, true);
++	if (rc)
++		dev_warn(&client->dev, "auto-activate failed: %d\n", rc);
++
++	dev_info(&client->dev, "AK09970 hall sensor ready on /dev/%s\n",
++		 AKM09970_DRV_NAME);
++	return 0;
++
++err_sysfs:
++	sysfs_remove_group(&client->dev.kobj, &akm09970_attr_group);
++err_wq:
++	destroy_workqueue(data->work_queue);
++	return rc;
++}
++
++static void akm09970_remove(struct i2c_client *client)
++{
++	struct akm09970_data *data = i2c_get_clientdata(client);
++
++	akm09970_active(data, false);
++	misc_deregister(&data->miscdev);
++	sysfs_remove_group(&client->dev.kobj, &akm09970_attr_group);
++	cancel_work_sync(&data->report_work);
++	destroy_workqueue(data->work_queue);
++}
++
++static const struct of_device_id akm09970_of_match[] = {
++	{ .compatible = "akm,akm09970" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, akm09970_of_match);
++
++static const struct i2c_device_id akm09970_id[] = {
++	{ AKM09970_DRV_NAME, 0 },
++	{}
++};
++MODULE_DEVICE_TABLE(i2c, akm09970_id);
++
++static struct i2c_driver akm09970_driver = {
++	.driver = {
++		.name = AKM09970_DRV_NAME,
++		.of_match_table = akm09970_of_match,
++	},
++	.probe = akm09970_probe,
++	.remove = akm09970_remove,
++	.id_table = akm09970_id,
++};
++
++module_i2c_driver(akm09970_driver);
++
++MODULE_AUTHOR("Xiaomi / mainline port");
++MODULE_DESCRIPTION("AKM AK09970 3-axis digital hall sensor");
++MODULE_LICENSE("GPL");
+diff --git a/include/linux/iio/magnetometer/ak09970.h b/include/linux/iio/magnetometer/ak09970.h
+new file mode 100644
+index 000000000..912c52343
+--- /dev/null
++++ b/include/linux/iio/magnetometer/ak09970.h
+@@ -0,0 +1,55 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * AK09970 3-axis digital hall sensor register definitions.
++ * Based on sm8750-mainline/linux include/linux/iio/magnetometer/ak09970.h
++ */
++#ifndef __AK09970_H__
++#define __AK09970_H__
++
++#define AK09970_I2C_REG_MAX_SIZE	8
++#define AK09970_SLAVE_ADDR		0x0c
++
++#define AK09970_REG_CNTL1		0x20
++#define AK09970_DRDYEN			0x01
++#define AK09970_SWX1EN			0x02
++#define AK09970_SWX2EN			0x04
++#define AK09970_SWY1EN			0x08
++#define AK09970_SWY2EN			0x10
++#define AK09970_SWZ1EN			0x20
++#define AK09970_SWZ2EN			0x40
++#define AK09970_ALL_EN			0x7F
++
++#define AK09970_SMR_BIT			5
++#define AK09970_HIGH_SENSITIVITY	0x00
++#define AK09970_WIDE_RANGE		0x01
++
++/* OH, OL, RH, RL */
++#define AK09970_REG_SWX1		0x22
++
++#define AK09970_REG_SRST		0x30
++#define AK09970_VAL_SRST_RESET		0x01
++
++#define AK09970_REG_CNTL2		0x21
++#define AK09970_MODE_POWER_DOWN		0x00
++#define AK09970_MODE_SNG_MEASURE	0x01
++#define AK09970_MODE_CONT_MEASURE_MODE1	0x02
++#define AK09970_MODE_CONT_MEASURE_MODE2	0x04
++#define AK09970_MODE_CONT_MEASURE_MODE3	0x06
++#define AK09970_MODE_CONT_MEASURE_MODE4	0x08
++#define AK09970_MODE_CONT_MEASURE_MODE5	0x0A
++#define AK09970_MODE_CONT_MEASURE_MODE6	0x0C
++#define AK09970_MODE_CONT_MEASURE_MODE7	0x0E
++#define AK09970_MODE_SELF_TEST		0x10
++
++#define AK09970_REG_DID			0x00
++#define AK09970_WIA_VAL			0x48C1
++
++#define AK09970_REG_ST1			0x10
++#define AK09970_REG_ST1_ZYX		0x17
++#define AK09970_REG_ST1_V		0x18
++#define AK09970_VAL_ST1_DRDY		0x01
++
++#define AK09970_WIA1_VALUE		0x48
++#define AK09970_WIA2_VALUE		0xC0
++
++#endif /* __AK09970_H__ */
+diff --git a/include/uapi/linux/akm09970.h b/include/uapi/linux/akm09970.h
+new file mode 100644
+index 000000000..306d118df
+--- /dev/null
++++ b/include/uapi/linux/akm09970.h
+@@ -0,0 +1,37 @@
++/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
++/*
++ * Copyright (c) 2018-2019, Linux Foundation. All rights reserved.
++ * Copyright (C) 2021 XiaoMi, Inc.
++ */
++#ifndef _UAPI_LINUX_AKM09970_H
++#define _UAPI_LINUX_AKM09970_H
++
++#include <linux/ioctl.h>
++#include <linux/types.h>
++
++#define AKM09970_DRV_NAME	"akm09970"
++#define AKM09970_CLASS_NAME	"akm"
++
++#define AKM_IOC_MAGIC		'M'
++#define AKM_PRIVATE		109
++
++#define AKM_SENSOR_INFO_SIZE	2
++#define AKM_SENSOR_DATA_SIZE	8
++
++struct akm09970_platform_data {
++	__u8 sensor_smr;
++	__u8 sensor_mode;
++	__u8 sensor_state;
++	__u8 data[AKM_SENSOR_DATA_SIZE];
++};
++
++#define AKM_IOC_SET_ACTIVE \
++	_IOW(AKM_IOC_MAGIC, AKM_PRIVATE + 1, struct akm09970_platform_data)
++#define AKM_IOC_SET_MODE \
++	_IOW(AKM_IOC_MAGIC, AKM_PRIVATE + 2, struct akm09970_platform_data)
++#define AKM_IOC_GET_SENSEDATA \
++	_IOR(AKM_IOC_MAGIC, AKM_PRIVATE + 4, struct akm09970_platform_data)
++#define AKM_IOC_GET_SENSSMR \
++	_IOR(AKM_IOC_MAGIC, AKM_PRIVATE + 5, struct akm09970_platform_data)
++
++#endif /* _UAPI_LINUX_AKM09970_H */
