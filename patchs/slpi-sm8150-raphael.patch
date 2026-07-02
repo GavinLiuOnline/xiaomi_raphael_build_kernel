@@ -1,0 +1,83 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
+index 83b2093..0e7e4d3 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
+@@ -9,6 +9,7 @@
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/leds/common.h>
+ #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
++#include <dt-bindings/firmware/qcom,scm.h>
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+ #include <dt-bindings/sound/qcom,q6asm.h>
+ #include <dt-bindings/usb/pd.h>
+@@ -143,6 +144,14 @@
+ 			reg = <0x0 0x97b00000 0x0 0x1400000>;
+ 		};
+ 
++		fastrpc_mem: fastrpc {
++			compatible = "shared-dma-pool";
++			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
++			alignment = <0x0 0x400000>;
++			size = <0x0 0x1000000>;
++			reusable;
++		};
++
+ 		ipa_fw_mem: memory@98f00000 {
+ 			no-map;
+ 			reg = <0x0 0x98f00000 0x0 0x10000>;
+@@ -195,7 +204,7 @@
+ 			no-map;
+ 
+ 			qcom,client-id = <1>;
+-			qcom,vmid = <15>;
++			qcom,vmid = <QCOM_SCM_VMID_MSS_MSA>;
+ 		};
+ 	};
+ 
+@@ -822,8 +831,31 @@
+ };
+ 
+ &remoteproc_slpi {
+-	status = "disabled";
++	status = "okay";
+ 	firmware-name = "qcom/sm8150/Xiaomi/raphael/slpi_rp.mdt";
++
++	glink-edge {
++		fastrpc {
++			/*
++			 * Mainline SLPI FastRPC (emainline + Dylan Van Assche SDM845):
++			 * fastrpc_mem CMA + qcom,vmids + compute-cb@0 (no IOMMU).
++			 * NOT Android msm_fastrpc cb13-15 / adsprpc model.
++			 * Do NOT add dma-coherent on cb@0 (reboot loop).
++			 */
++			qcom,vmids = <QCOM_SCM_VMID_HLOS QCOM_SCM_VMID_MSS_MSA
++				      QCOM_SCM_VMID_SSC_Q6 QCOM_SCM_VMID_ADSP_Q6>;
++			memory-region = <&fastrpc_mem>;
++
++			/delete-node/ compute-cb@1;
++			/delete-node/ compute-cb@2;
++			/delete-node/ compute-cb@3;
++
++			compute-cb@0 {
++				compatible = "qcom,fastrpc-compute-cb";
++				reg = <0>;
++			};
++		};
++	};
+ };
+ 
+ &q6afedai {
+diff --git a/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c b/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c
+index f8ebbd4..5659341 100644
+--- a/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c
++++ b/drivers/gpu/drm/panel/panel-samsung-ams639rq08.c
+@@ -247,7 +247,8 @@ ams639rq08_create_backlight(struct mipi_dsi_device *dsi)
+ 		.max_brightness = 2047,
+ 	};
+ 
+-	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
++	/* SLPI TCS3701 under-display ALS/prox reads panel0-backlight (Android name) */
++	return devm_backlight_device_register(dev, "panel0-backlight", dev, dsi,
+ 						&ams639rq08_bl_ops, &props);
+ }
+ 

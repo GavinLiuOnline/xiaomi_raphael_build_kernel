@@ -9,9 +9,6 @@ export CCACHE_DIR="$HOME/.ccache"
 export PATH="/usr/lib/ccache:$PATH"
 export CCACHE_MAXSIZE=10G
 
-git config --global user.name "gavin liu"
-git config --global user.email "1824306327@163.com"
-
 if [ -z "$1" ]; then
     echo "错误: 请提供分支后缀参数，例如: $0 v1"
     exit 1
@@ -56,8 +53,10 @@ fi
 # 应用补丁
 
 cd linux
+git apply --check ../patchs/raphael.patch
 git apply ../patchs/raphael.patch
-
+git apply --check ../patchs/slpi-sm8150-raphael.patch
+git apply ../patchs/slpi-sm8150-raphael.patch
 
 # 生成内核配置
 cp ../raphael.config arch/arm64/configs/
