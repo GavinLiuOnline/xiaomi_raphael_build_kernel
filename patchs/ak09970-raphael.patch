@@ -1,3 +1,34 @@
+--- a/drivers/iio/magnetometer/Kconfig
++++ b/drivers/iio/magnetometer/Kconfig
+@@ -33,6 +33,18 @@
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called ak8974.
+ 
++config AKM09970
++	tristate "AKM AK09970 3-axis digital hall sensor"
++	depends on I2C
++	depends on OF
++	depends on GPIOLIB
++	help
++	  Say Y here to build support for the AKM AK09970 3-axis digital
++	  hall effect sensor used on Xiaomi Raphael (pop-up camera hall).
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called akm09970.
++
+ config AK8975
+ 	tristate "Asahi Kasei AK8975 3-Axis Magnetometer"
+ 	depends on I2C
+--- a/drivers/iio/magnetometer/Makefile
++++ b/drivers/iio/magnetometer/Makefile
+@@ -5,6 +5,7 @@
+ 
+ # When adding new entries keep the list in alphabetical order
+ obj-$(CONFIG_AF8133J)	+= af8133j.o
++obj-$(CONFIG_AKM09970)	+= akm09970.o
+ obj-$(CONFIG_AK8974)	+= ak8974.o
+ obj-$(CONFIG_AK8975)	+= ak8975.o
+ obj-$(CONFIG_ALS31300)	+= als31300.o
 --- a/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8150-xiaomi-raphael.dts
 @@ -613,6 +613,27 @@
