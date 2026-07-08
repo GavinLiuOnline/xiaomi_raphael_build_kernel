@@ -1,5 +1,5 @@
 Package: firmware-xiaomi-raphael
-Version: 1.1
+Version: 1.3
 Architecture: arm64
 Maintainer: raphael <anonymous@localhost>
 Conflicts: linux-firmware
