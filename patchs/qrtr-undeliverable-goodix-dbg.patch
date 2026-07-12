@@ -1,0 +1,58 @@
+diff --git a/drivers/input/touchscreen/goodix_gtx8.c b/drivers/input/touchscreen/goodix_gtx8.c
+index bd2ccfc2c..094d51a39 100644
+--- a/drivers/input/touchscreen/goodix_gtx8.c
++++ b/drivers/input/touchscreen/goodix_gtx8.c
+@@ -158,7 +158,7 @@ static void goodix_gtx8_touch_handler(struct goodix_gtx8_core *cd, u8 touch_num,
+ 				  GOODIX_GTX8_CHECKSUM_SIZE;
+ 			if (!goodix_gtx8_checksum_valid_normandy(
+ 				    cd->event_buffer, len)) {
+-				dev_err(cd->dev,
++				dev_dbg(cd->dev,
+ 					"touch data checksum error: %*ph\n",
+ 					len, cd->event_buffer);
+ 				return;
+@@ -168,7 +168,7 @@ static void goodix_gtx8_touch_handler(struct goodix_gtx8_core *cd, u8 touch_num,
+ 				  GOODIX_GTX8_CHECKSUM_SIZE;
+ 			if (!goodix_gtx8_checksum_valid_yellowstone(
+ 				    (u8 *)touch_data, len)) {
+-				dev_err(cd->dev,
++				dev_dbg(cd->dev,
+ 					"touch data checksum error: %*ph\n",
+ 					len, (u8 *)touch_data);
+ 				return;
+diff --git a/net/qrtr/af_qrtr.c b/net/qrtr/af_qrtr.c
+index d77e9c821..f2bdff6a9 100644
+--- a/net/qrtr/af_qrtr.c
++++ b/net/qrtr/af_qrtr.c
+@@ -524,12 +524,18 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
+ 		qrtr_tx_resume(node, skb);
+ 	} else {
+ 		ipc = qrtr_port_lookup(cb->dst_port);
++		/*
++		 * No local socket / full receive queue is not a malformed
++		 * packet. Returning -EINVAL makes qcom_smd_qrtr spam
++		 * "invalid ipcrouter packet" for normal ADSP/modem traffic
++		 * before userspace binds. Drop quietly instead.
++		 */
+ 		if (!ipc)
+-			goto err;
++			goto drop;
+ 
+ 		if (sock_queue_rcv_skb(&ipc->sk, skb)) {
+ 			qrtr_port_put(ipc);
+-			goto err;
++			goto drop;
+ 		}
+ 
+ 		qrtr_port_put(ipc);
+@@ -537,6 +543,10 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
+ 
+ 	return 0;
+ 
++drop:
++	kfree_skb(skb);
++	return 0;
++
+ err:
+ 	kfree_skb(skb);
+ 	return -EINVAL;
