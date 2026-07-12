@@ -10,7 +10,6 @@ mcfg_sw/generic/apac/vodafone/commerci/india/mcfg_sw.mbn
 mcfg_sw/generic/aunz/optus/commerci/au/mcfg_sw.mbn
 mcfg_sw/generic/aunz/telstra/commerci/mcfg_sw.mbn
 mcfg_sw/generic/aunz/vodafone/commerci/mcfg_sw.mbn
-mcfg_sw/generic/china/cmcc/commerci/volte_op/mcfg_sw.mbn
 mcfg_sw/generic/china/cmcc/lab/agnss_lo/mcfg_sw.mbn
 mcfg_sw/generic/china/cmcc/lab/conf_vol/mcfg_sw.mbn
 mcfg_sw/generic/china/cmcc/lab/eps_only/mcfg_sw.mbn
