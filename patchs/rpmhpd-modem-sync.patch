@@ -1,0 +1,143 @@
+diff --git a/drivers/pmdomain/qcom/rpmhpd.c b/drivers/pmdomain/qcom/rpmhpd.c
+index 19849703b..a0f2cce52 100644
+--- a/drivers/pmdomain/qcom/rpmhpd.c
++++ b/drivers/pmdomain/qcom/rpmhpd.c
+@@ -2,6 +2,7 @@
+ /* Copyright (c) 2018, The Linux Foundation. All rights reserved.*/
+ 
+ #include <linux/cleanup.h>
++#include <linux/delay.h>
+ #include <linux/err.h>
+ #include <linux/init.h>
+ #include <linux/kernel.h>
+@@ -14,6 +15,7 @@
+ #include <linux/pm_opp.h>
+ #include <soc/qcom/cmd-db.h>
+ #include <soc/qcom/rpmh.h>
++#include <soc/qcom/rpmhpd.h>
+ #include <dt-bindings/power/qcom-rpmpd.h>
+ #include <dt-bindings/power/qcom,rpmhpd.h>
+ 
+@@ -67,6 +69,7 @@ struct rpmhpd_desc {
+ };
+ 
+ static DEFINE_MUTEX(rpmhpd_lock);
++static bool rpmhpd_synced;
+ 
+ /* RPMH powerdomains */
+ 
+@@ -1121,7 +1124,32 @@ static void rpmhpd_sync_state(struct device *dev)
+ 			dev_err(dev, "failed to sync %s\n", pd->res_name);
+ 	}
+ 	mutex_unlock(&rpmhpd_lock);
++
++	rpmhpd_synced = true;
++}
++
++bool qcom_rpmhpd_is_synced(void)
++{
++	return rpmhpd_synced;
++}
++EXPORT_SYMBOL_GPL(qcom_rpmhpd_is_synced);
++
++int qcom_rpmhpd_wait_sync(unsigned long timeout_ms)
++{
++	unsigned long deadline = jiffies + msecs_to_jiffies(timeout_ms);
++
++	if (rpmhpd_synced)
++		return 0;
++
++	while (!rpmhpd_synced) {
++		if (time_after(jiffies, deadline))
++			return -ETIMEDOUT;
++		msleep(20);
++	}
++
++	return 0;
+ }
++EXPORT_SYMBOL_GPL(qcom_rpmhpd_wait_sync);
+ 
+ static struct platform_driver rpmhpd_driver = {
+ 	.driver = {
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index 46204da04..dccc10676 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -26,6 +26,7 @@
+ #include <linux/soc/qcom/mdt_loader.h>
+ #include <linux/soc/qcom/smem.h>
+ #include <linux/soc/qcom/smem_state.h>
++#include <soc/qcom/rpmhpd.h>
+ 
+ #include "qcom_common.h"
+ #include "qcom_pil_info.h"
+@@ -272,6 +273,24 @@ static int qcom_pas_map_carveout(struct rproc *rproc, phys_addr_t mem_phys, size
+ 	return ret;
+ }
+ 
++static int qcom_pas_wait_rpmhpd_sync(struct qcom_pas *pas)
++{
++	int ret;
++
++	if (!pas->proxy_pd_count)
++		return 0;
++
++	if (qcom_rpmhpd_is_synced())
++		return 0;
++
++	dev_dbg(pas->dev, "waiting for rpmhpd sync_state before modem RF power\n");
++	ret = qcom_rpmhpd_wait_sync(120000);
++	if (ret)
++		dev_err(pas->dev, "rpmhpd sync_state not ready (%d), defer modem start\n", ret);
++
++	return ret;
++}
++
+ static int qcom_pas_start(struct rproc *rproc)
+ {
+ 	struct qcom_pas *pas = rproc->priv;
+@@ -281,6 +300,12 @@ static int qcom_pas_start(struct rproc *rproc)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = qcom_pas_wait_rpmhpd_sync(pas);
++	if (ret) {
++		qcom_q6v5_unprepare(&pas->q6v5);
++		return ret;
++	}
++
+ 	ret = qcom_pas_pds_enable(pas, pas->proxy_pds, pas->proxy_pd_count);
+ 	if (ret < 0)
+ 		goto disable_irqs;
+diff --git a/include/soc/qcom/rpmhpd.h b/include/soc/qcom/rpmhpd.h
+new file mode 100644
+index 000000000..2e28dc62a
+--- /dev/null
++++ b/include/soc/qcom/rpmhpd.h
+@@ -0,0 +1,26 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef __SOC_QCOM_RPMHPD_H
++#define __SOC_QCOM_RPMHPD_H
++
++#include <linux/device.h>
++
++#if IS_ENABLED(CONFIG_QCOM_RPMHPD)
++
++bool qcom_rpmhpd_is_synced(void);
++int qcom_rpmhpd_wait_sync(unsigned long timeout_ms);
++
++#else
++
++static inline bool qcom_rpmhpd_is_synced(void)
++{
++	return true;
++}
++
++static inline int qcom_rpmhpd_wait_sync(unsigned long timeout_ms)
++{
++	return 0;
++}
++
++#endif
++
++#endif

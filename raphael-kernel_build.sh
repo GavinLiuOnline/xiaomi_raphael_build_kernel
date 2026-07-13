@@ -59,6 +59,8 @@ git apply --check ../patchs/slpi-sm8150-raphael.patch
 git apply ../patchs/slpi-sm8150-raphael.patch
 git apply --check ../patchs/qrtr-undeliverable-goodix-dbg.patch
 git apply ../patchs/qrtr-undeliverable-goodix-dbg.patch
+git apply --check ../patchs/rpmhpd-modem-sync.patch
+git apply ../patchs/rpmhpd-modem-sync.patch
 
 # 生成内核配置
 cp ../raphael.config arch/arm64/configs/
