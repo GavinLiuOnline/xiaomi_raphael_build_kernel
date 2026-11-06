@@ -1,0 +1,107 @@
+#!/bin/bash
+# Small helper to select the WCD934x analog output / input path manually.
+#
+#   raphael-audio output speaker     bottom loudspeaker (TFA9874, hw:0,1)
+#   raphael-audio output headphone   3.5mm headphones (WCD934x HPH, hw:0,0)
+#   raphael-audio output earpiece    call earpiece (WCD934x EAR, hw:0,0)
+#   raphael-audio mic internal       built-in microphone (AMIC1)
+#   raphael-audio mic headset        3.5mm headset microphone (AMIC2)
+#   raphael-audio status
+set -uo pipefail
+
+SPK_NODE="alsa_output.platform-sound.playback.1.0"
+HP_NODE="alsa_output.platform-sound.playback.0.0"
+
+cset() { amixer -c 0 cset name="$1" "$2" >/dev/null 2>&1 || true; }
+
+q6_routing_on() {
+	cset 'AIF1_CAP Mixer SLIM TX0' 1
+	cset 'MultiMedia3 Mixer SLIMBUS_0_TX' 1
+}
+
+set_mic_internal() {
+	cset 'ADC MUX0' AMIC
+	cset 'AMIC MUX0' ADC1
+	cset 'ADC1 Volume' 20
+	cset 'CDC_IF TX0 MUX' DEC0
+	cset 'DEC0 Volume' 84
+	q6_routing_on
+	echo "mic: internal (AMIC1)"
+}
+
+set_mic_headset() {
+	cset 'ADC MUX1' AMIC
+	cset 'AMIC MUX0' ADC2
+	cset 'ADC2 Volume' 20
+	cset 'CDC_IF TX0 MUX' DEC0
+	cset 'DEC0 Volume' 84
+	q6_routing_on
+	echo "mic: headset (AMIC2)"
+}
+
+use_sink() {
+	local id
+	id=$(pactl list short sinks 2>/dev/null | awk -v n="$1" '$2 == n {print $1; exit}')
+	[ -n "$id" ] && { wpctl set-default "$id" 2>/dev/null; wpctl set-mute "$id" 0 2>/dev/null; }
+}
+
+set_out_speaker() {
+	use_sink "$SPK_NODE"
+	echo "output: speaker"
+}
+
+set_out_headphone() {
+	cset 'SLIM RX0 MUX' 'AIF1_PB'
+	cset 'SLIM RX1 MUX' 'AIF1_PB'
+	cset 'RX INT1_1 MIX1 INP0' 'RX0'
+	cset 'RX INT2_1 MIX1 INP0' 'RX1'
+	cset 'COMP1 Switch' on
+	cset 'COMP2 Switch' on
+	cset 'RX INT1 DEM MUX' 'CLSH_DSM_OUT'
+	cset 'RX INT2 DEM MUX' 'CLSH_DSM_OUT'
+	cset 'RX1 Digital Volume' 68
+	cset 'RX2 Digital Volume' 68
+	use_sink "$HP_NODE"
+	echo "output: headphone"
+}
+
+set_out_earpiece() {
+	# RX INT0 -> EAR PA on the WCD934x (same PCM as the headphones).
+	cset 'SLIM RX0 MUX' 'AIF1_PB'
+	cset 'RX INT0_1 MIX1 INP0' 'RX0'
+	cset 'RX INT0 DEM MUX' 'CLSH_DSM_OUT'
+	cset 'EAR PA Volume' 4
+	cset 'RX1 Digital Volume' 0
+	cset 'RX2 Digital Volume' 0
+	cset 'RX INT1 DEM MUX' 'ZERO'
+	cset 'RX INT2 DEM MUX' 'ZERO'
+	use_sink "$HP_NODE"
+	echo "output: earpiece"
+}
+
+case "${1:-}" in
+output)
+	case "${2:-}" in
+	speaker)   set_out_speaker ;;
+	headphone) set_out_headphone ;;
+	earpiece)  set_out_earpiece ;;
+	*) echo "usage: $0 output {speaker|headphone|earpiece}" >&2; exit 1 ;;
+	esac
+	;;
+mic)
+	case "${2:-}" in
+	internal) set_mic_internal ;;
+	headset)  set_mic_headset ;;
+	*) echo "usage: $0 mic {internal|headset}" >&2; exit 1 ;;
+	esac
+	;;
+status)
+	amixer -c 0 cget numid=94 2>/dev/null
+	pactl list short sinks 2>/dev/null
+	pactl list short sources 2>/dev/null
+	;;
+*)
+	echo "usage: $0 {output {speaker|headphone|earpiece} | mic {internal|headset} | status}" >&2
+	exit 1
+	;;
+esac

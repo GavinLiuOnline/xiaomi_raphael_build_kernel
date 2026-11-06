@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+chmod 755 /usr/local/sbin/raphael-headset-switch.sh /usr/local/bin/raphael-audio || true
+
+# Older versions shipped a system service; retire it (it ran as root and could
+# not reach the per-user PipeWire instance).
+if [ -d /run/systemd/system ]; then
+	systemctl disable --now raphael-headset-switch.service >/dev/null 2>&1 || true
+	systemctl daemon-reload || true
+fi
+
+# Enable the per-session service for every logged-in user.
+mkdir -p /etc/systemd/user/default.target.wants
+ln -sf /usr/lib/systemd/user/raphael-headset-switch.service \
+	/etc/systemd/user/default.target.wants/raphael-headset-switch.service
+
+for d in /run/user/*; do
+	[ -d "$d" ] || continue
+	uid=${d##*/}
+	name=$(id -nu "$uid" 2>/dev/null) || continue
+	runuser -u "$name" -- env XDG_RUNTIME_DIR="$d" systemctl --user daemon-reload >/dev/null 2>&1 || true
+	runuser -u "$name" -- env XDG_RUNTIME_DIR="$d" systemctl --user enable --now raphael-headset-switch.service >/dev/null 2>&1 || true
+done
+
+exit 0

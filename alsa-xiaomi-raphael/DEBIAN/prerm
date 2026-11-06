@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+rm -f /etc/systemd/user/default.target.wants/raphael-headset-switch.service
+
+for d in /run/user/*; do
+	[ -d "$d" ] || continue
+	uid=${d##*/}
+	name=$(id -nu "$uid" 2>/dev/null) || continue
+	runuser -u "$name" -- env XDG_RUNTIME_DIR="$d" systemctl --user disable --now raphael-headset-switch.service >/dev/null 2>&1 || true
+done
+
+exit 0

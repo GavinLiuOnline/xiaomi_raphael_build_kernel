@@ -1,0 +1,15 @@
+[Unit]
+Description=Raphael 3.5mm jack routing switcher (speaker/headphone + mic)
+After=pipewire.service wireplumber.service
+Wants=pipewire.service
+ConditionPathExists=/usr/local/sbin/raphael-headset-switch.sh
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/raphael-headset-switch.sh
+Restart=always
+RestartSec=3
+Nice=5
+
+[Install]
+WantedBy=default.target
